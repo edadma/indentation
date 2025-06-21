@@ -1,7 +1,7 @@
 ThisBuild / licenses += "ISC"      -> url("https://opensource.org/licenses/ISC")
 ThisBuild / versionScheme          := Some("semver-spec")
 ThisBuild / evictionErrorLevel     := Level.Warn
-ThisBuild / scalaVersion           := "3.7.0"
+ThisBuild / scalaVersion           := "3.7.1"
 ThisBuild / organization           := "io.github.edadma"
 ThisBuild / organizationName       := "edadma"
 ThisBuild / organizationHomepage   := Some(url("https://github.com/edadma"))
@@ -13,14 +13,16 @@ ThisBuild / publishConfiguration := publishConfiguration.value.withOverwrite(tru
 ThisBuild / resolvers ++= Seq(
   Resolver.mavenLocal,
 )
-ThisBuild / resolvers ++= Resolver.sonatypeOssRepos("snapshots") ++ Resolver.sonatypeOssRepos("releases")
+
+ThisBuild / resolvers += Resolver.sonatypeCentralSnapshots
+//ThisBuild / resolvers ++= Resolver.sonatypeOssRepos("snapshots") ++ Resolver.sonatypeOssRepos("releases")
 
 ThisBuild / sonatypeProfileName := "io.github.edadma"
 
 ThisBuild / scmInfo := Some(
   ScmInfo(
-    url("https://github.com/edadma/cross_template"),
-    "scm:git@github.com:edadma/cross_template.git",
+    url("https://github.com/edadma/indentation"),
+    "scm:git@github.com:edadma/indentation.git",
   ),
 )
 ThisBuild / developers := List(
@@ -32,7 +34,7 @@ ThisBuild / developers := List(
   ),
 )
 
-ThisBuild / homepage := Some(url("https://github.com/edadma/cross_template"))
+ThisBuild / homepage := Some(url("https://github.com/edadma/indentation"))
 
 ThisBuild / pomIncludeRepository := { _ => false }
 ThisBuild / publishTo            := {
@@ -42,10 +44,10 @@ ThisBuild / publishTo            := {
 }
 ThisBuild / publishMavenStyle := true
 
-lazy val cross_template = crossProject(JSPlatform, JVMPlatform, NativePlatform)
+lazy val indentation = crossProject(JSPlatform, JVMPlatform, NativePlatform)
   .in(file("."))
   .settings(
-    name := "cross_template",
+    name := "indentation",
     scalacOptions ++=
       Seq(
         "-deprecation",
@@ -91,9 +93,9 @@ lazy val cross_template = crossProject(JSPlatform, JVMPlatform, NativePlatform)
 
 lazy val root = project
   .in(file("."))
-  .aggregate(cross_template.js, cross_template.jvm, cross_template.native)
+  .aggregate(indentation.js, indentation.jvm, indentation.native)
   .settings(
-    name                := "cross_template",
+    name                := "indentation",
     publish / skip      := true,
     publishLocal / skip := true,
   )
