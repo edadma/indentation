@@ -18,7 +18,7 @@ case class BinOp(left: Expr, op: String, right: Expr) extends Expr
 class ToyLanguageParser extends StandardTokenParsers with PackratParsers {
 
   override val lexical: IndentationLexical = new IndentationLexical(
-    newlineBeforeIndent = false,
+    newlineBeforeIndent = true, // Changed to true!
     newlineAfterDedent = true,
     startLineJoining = List("("),
     endLineJoining = List(")"),
