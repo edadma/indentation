@@ -60,6 +60,7 @@ lazy val indentation = crossProject(JSPlatform, JVMPlatform, NativePlatform)
       ),
     libraryDependencies += "org.scala-lang.modules" %%% "scala-parser-combinators" % "2.4.0",
     libraryDependencies += "org.scalatest"          %%% "scalatest"                % "3.2.19" % "test",
+    libraryDependencies += "org.scalacheck"          %% "scalacheck"               % "1.18.1" % "test",
 //    libraryDependencies ++= Seq(
 //      "io.github.edadma" %%% "cross-platform" % "0.0.10"
 //    ),

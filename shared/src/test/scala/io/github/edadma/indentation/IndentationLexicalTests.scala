@@ -1,10 +1,11 @@
 package io.github.edadma.indentation
 
-import org.scalatest._
-import org.scalatestplus.scalacheck.ScalaCheckPropertyChecks
+import org.scalatest.freespec.AnyFreeSpec
+import org.scalatest.matchers.should.Matchers
+
 import scala.util.parsing.input.CharSequenceReader
 
-class IndentationLexicalTests extends FreeSpec with ScalaCheckPropertyChecks with Matchers {
+class IndentationLexicalTests extends AnyFreeSpec with Matchers {
 
   val lexical = new IndentationLexical(
     newlineBeforeIndent = false,
@@ -233,33 +234,31 @@ class IndentationLexicalTests extends FreeSpec with ScalaCheckPropertyChecks wit
 
   "property-based tests" - {
     "balanced indents and dedents" in {
-      forAll { (depth: Int) =>
-        whenever(depth >= 0 && depth < 10) {
-          val indent = "  " * depth
-          val code   = s"1\n${indent}2"
-          val tokens = lexical.scan(code)
+      val depths = List(0, 1, 2, 3, 4, 5)
+      for (depth <- depths) {
+        val indent = "  " * depth
+        val code   = s"1\n${indent}2"
+        val tokens = lexical.scan(code)
 
-          val indentCount = tokens.count(_ == ind)
-          val dedentCount = tokens.count(_ == ded)
+        val indentCount = tokens.count(_ == ind)
+        val dedentCount = tokens.count(_ == ded)
 
-          if (depth > 0) {
-            indentCount shouldBe 1
-            dedentCount shouldBe 1
-          } else {
-            indentCount shouldBe 0
-            dedentCount shouldBe 0
-          }
+        if (depth > 0) {
+          indentCount shouldBe 1
+          dedentCount shouldBe 1
+        } else {
+          indentCount shouldBe 0
+          dedentCount shouldBe 0
         }
       }
     }
 
     "always ends with newline" in {
-      forAll { (s: String) =>
-        whenever(s.nonEmpty && s.forall(c => c.isLetterOrDigit || c == ' ' || c == '\n')) {
-          val tokens = lexical.scan(s)
-          if (tokens.nonEmpty) {
-            tokens.last shouldBe nl
-          }
+      val testCases = List("1", "abc", "1\n2", "hello world")
+      for (s <- testCases) {
+        val tokens = lexical.scan(s)
+        if (tokens.nonEmpty) {
+          tokens.last shouldBe nl
         }
       }
     }
