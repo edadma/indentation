@@ -2,6 +2,7 @@ package io.github.edadma.indentation
 
 import org.scalatest.freespec.AnyFreeSpec
 import org.scalatest.matchers.should.Matchers
+
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
 
@@ -64,8 +65,7 @@ class ToyLanguageTests extends AnyFreeSpec with Matchers {
 
   "simple if statements" - {
     "basic if without else" in {
-      val program = """if x > 0
-                      |    print x""".stripMargin
+      val program = "if x > 0 then\n    print x"
 
       parser.parse(program) should matchPattern {
         case parser.Success(List(If(BinOp(Var("x"), ">", Num(0)), List(Print(Var("x"))), None)), _) =>
@@ -73,10 +73,7 @@ class ToyLanguageTests extends AnyFreeSpec with Matchers {
     }
 
     "if with else" in {
-      val program = """if x > 0
-                      |    print x
-                      |else
-                      |    print 0""".stripMargin
+      val program = "if x > 0 then\n    print x\nelse\n    print 0"
 
       parser.parse(program) should matchPattern {
         case parser.Success(
@@ -88,14 +85,16 @@ class ToyLanguageTests extends AnyFreeSpec with Matchers {
   }
 
   "indentation tests" - {
+    "debug token stream" in {
+      val program = "if x > 0 then\n    print x"
+      val tokens  = parser.lexical.scan(program)
+      println(s"Tokens for '$program': $tokens")
+      // This test is just for debugging - it will always pass
+      tokens.length should be > 0
+    }
+
     "nested if statements" in {
-      val program = """if x > 0
-                      |    if x > 10
-                      |        print 1
-                      |    else
-                      |        print 2
-                      |else
-                      |    print 3""".stripMargin
+      val program = "if x > 0 then\n    if x > 10 then\n        print 1\n    else\n        print 2\nelse\n    print 3"
 
       val result = parser.parse(program)
       result should matchPattern { case parser.Success(_, _) => }
@@ -111,11 +110,7 @@ class ToyLanguageTests extends AnyFreeSpec with Matchers {
     }
 
     "multiple statements in blocks" in {
-      val program = """if x > 0
-                      |    y = x + 1
-                      |    z = y * 2
-                      |    print z
-                      |print y""".stripMargin
+      val program = "if x > 0 then\n    y = x + 1\n    z = y * 2\n    print z\nprint y"
 
       val result = parser.parse(program)
       result should matchPattern { case parser.Success(_, _) => }
@@ -129,13 +124,8 @@ class ToyLanguageTests extends AnyFreeSpec with Matchers {
     }
 
     "deep nesting" in {
-      val program = """if a > 0
-                      |    if b > 0
-                      |        if c > 0
-                      |            print 1
-                      |        print 2
-                      |    print 3
-                      |print 4""".stripMargin
+      val program =
+        "if a > 0 then\n    if b > 0 then\n        if c > 0 then\n            print 1\n        print 2\n    print 3\nprint 4"
 
       val result = parser.parse(program)
       result should matchPattern { case parser.Success(List(_, Print(Num(4))), _) => }
@@ -144,8 +134,7 @@ class ToyLanguageTests extends AnyFreeSpec with Matchers {
 
   "interpreter tests" - {
     "basic assignment and print" in {
-      val program = """x = 42
-                      |print x""".stripMargin
+      val program = "x = 42\nprint x"
 
       val parseResult = parser.parse(program)
       parseResult should matchPattern { case parser.Success(_, _) => }
@@ -160,8 +149,7 @@ class ToyLanguageTests extends AnyFreeSpec with Matchers {
     }
 
     "arithmetic operations" in {
-      val program = """x = 2 + 3 * 4
-                      |print x""".stripMargin
+      val program = "x = 2 + 3 * 4\nprint x"
 
       val output = captureOutput {
         parser.parse(program) match {
@@ -173,11 +161,7 @@ class ToyLanguageTests extends AnyFreeSpec with Matchers {
     }
 
     "conditional execution" in {
-      val program = """x = 5
-                      |if x > 3
-                      |    print 1
-                      |else
-                      |    print 0""".stripMargin
+      val program = "x = 5\nif x > 3 then\n    print 1\nelse\n    print 0"
 
       val output = captureOutput {
         parser.parse(program) match {
@@ -189,14 +173,8 @@ class ToyLanguageTests extends AnyFreeSpec with Matchers {
     }
 
     "nested conditions" in {
-      val program = """x = 15
-                      |if x > 10
-                      |    if x > 20
-                      |        print 3
-                      |    else
-                      |        print 2
-                      |else
-                      |    print 1""".stripMargin
+      val program =
+        "x = 15\nif x > 10 then\n    if x > 20 then\n        print 3\n    else\n        print 2\nelse\n    print 1"
 
       val output = captureOutput {
         parser.parse(program) match {
@@ -208,17 +186,8 @@ class ToyLanguageTests extends AnyFreeSpec with Matchers {
     }
 
     "complex program" in {
-      val program = """a = 1
-                      |b = 2
-                      |if a < b
-                      |    sum = a + b
-                      |    product = a * b
-                      |    if sum > product
-                      |        print sum
-                      |    else
-                      |        print product
-                      |else
-                      |    print 0""".stripMargin
+      val program =
+        "a = 1\nb = 2\nif a < b then\n    sum = a + b\n    product = a * b\n    if sum > product then\n        print sum\n    else\n        print product\nelse\n    print 0"
 
       val output = captureOutput {
         parser.parse(program) match {
@@ -232,10 +201,7 @@ class ToyLanguageTests extends AnyFreeSpec with Matchers {
 
   "line joining tests" - {
     "parentheses across lines" in {
-      val program = """result = (1 +
-                      |          2 +
-                      |          3)
-                      |print result""".stripMargin
+      val program = "result = (1 +\n          2 +\n          3)\nprint result"
 
       val output = captureOutput {
         parser.parse(program) match {
@@ -249,8 +215,7 @@ class ToyLanguageTests extends AnyFreeSpec with Matchers {
 
   "error cases" - {
     "syntax error" in {
-      val program = """x =
-                      |print x""".stripMargin
+      val program = "x = \nprint x"
 
       parser.parse(program) should matchPattern {
         case parser.NoSuccess(_, _) =>
@@ -258,8 +223,7 @@ class ToyLanguageTests extends AnyFreeSpec with Matchers {
     }
 
     "missing indent" in {
-      val program = """if x > 0
-                      |print x""".stripMargin
+      val program = "if x > 0 then\nprint x"
 
       parser.parse(program) should matchPattern {
         case parser.NoSuccess(_, _) =>

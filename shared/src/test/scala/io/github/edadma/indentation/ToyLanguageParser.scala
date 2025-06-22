@@ -27,7 +27,7 @@ class ToyLanguageParser extends StandardTokenParsers with PackratParsers {
     blockCommentEnd = "*/",
   ) {
     // Add keywords
-    reserved ++= List("if", "else", "print")
+    reserved ++= List("if", "else", "then", "print")
 
     // Add operators and delimiters
     delimiters ++= List("=", "+", "-", "*", "/", "<", ">", "==", "!=", "<=", ">=", "(", ")")
@@ -56,8 +56,8 @@ class ToyLanguageParser extends StandardTokenParsers with PackratParsers {
     ident ~ "=" ~ expr <~ Newline ^^ { case id ~ _ ~ value => Assign(id, value) }
 
   lazy val ifStatement: PackratParser[If] =
-    "if" ~ expr ~ Newline ~ Indent ~ rep1(statement) ~ Dedent ~ opt(elseClause) ^^ {
-      case _ ~ condition ~ _ ~ _ ~ thenStmts ~ _ ~ elseStmts =>
+    "if" ~ expr ~ "then" ~ Newline ~ Indent ~ rep1(statement) ~ Dedent ~ opt(elseClause) ^^ {
+      case _ ~ condition ~ _ ~ _ ~ _ ~ thenStmts ~ _ ~ elseStmts =>
         If(condition, thenStmts, elseStmts)
     }
 
