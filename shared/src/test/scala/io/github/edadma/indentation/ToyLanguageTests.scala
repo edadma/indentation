@@ -8,8 +8,6 @@ import java.io.PrintStream
 
 class ToyLanguageTests extends AnyFreeSpec with Matchers {
 
-  val parser = new ToyLanguageParser
-
   def captureOutput(block: => Unit): String = {
     val outputStream = new ByteArrayOutputStream()
     val printStream  = new PrintStream(outputStream)
@@ -27,22 +25,22 @@ class ToyLanguageTests extends AnyFreeSpec with Matchers {
   "simple expressions" - {
     "basic assignment" in {
       val program = """x = 5"""
-      parser.parse(program) should matchPattern {
-        case parser.Success(List(Assign("x", Num(5))), _) =>
+      ToyLanguageParser.parse(program) should matchPattern {
+        case ToyLanguageParser.Success(List(Assign("x", Num(5))), _) =>
       }
     }
 
     "arithmetic operations" in {
       val program = """result = 2 + 3 * 4"""
-      parser.parse(program) should matchPattern {
-        case parser.Success(List(Assign("result", BinOp(Num(2), "+", BinOp(Num(3), "*", Num(4))))), _) =>
+      ToyLanguageParser.parse(program) should matchPattern {
+        case ToyLanguageParser.Success(List(Assign("result", BinOp(Num(2), "+", BinOp(Num(3), "*", Num(4))))), _) =>
       }
     }
 
     "parentheses" in {
       val program = """result = (2 + 3) * 4"""
-      parser.parse(program) should matchPattern {
-        case parser.Success(List(Assign("result", BinOp(BinOp(Num(2), "+", Num(3)), "*", Num(4)))), _) =>
+      ToyLanguageParser.parse(program) should matchPattern {
+        case ToyLanguageParser.Success(List(Assign("result", BinOp(BinOp(Num(2), "+", Num(3)), "*", Num(4)))), _) =>
       }
     }
   }
@@ -50,15 +48,15 @@ class ToyLanguageTests extends AnyFreeSpec with Matchers {
   "print statements" - {
     "print number" in {
       val program = """print 42"""
-      parser.parse(program) should matchPattern {
-        case parser.Success(List(Print(Num(42))), _) =>
+      ToyLanguageParser.parse(program) should matchPattern {
+        case ToyLanguageParser.Success(List(Print(Num(42))), _) =>
       }
     }
 
     "print variable" in {
       val program = """print x"""
-      parser.parse(program) should matchPattern {
-        case parser.Success(List(Print(Var("x"))), _) =>
+      ToyLanguageParser.parse(program) should matchPattern {
+        case ToyLanguageParser.Success(List(Print(Var("x"))), _) =>
       }
     }
   }
@@ -67,16 +65,16 @@ class ToyLanguageTests extends AnyFreeSpec with Matchers {
     "basic if without else" in {
       val program = "if x > 0 then\n    print x"
 
-      parser.parse(program) should matchPattern {
-        case parser.Success(List(If(BinOp(Var("x"), ">", Num(0)), List(Print(Var("x"))), None)), _) =>
+      ToyLanguageParser.parse(program) should matchPattern {
+        case ToyLanguageParser.Success(List(If(BinOp(Var("x"), ">", Num(0)), List(Print(Var("x"))), None)), _) =>
       }
     }
 
     "if with else" in {
       val program = "if x > 0 then\n    print x\nelse\n    print 0"
 
-      parser.parse(program) should matchPattern {
-        case parser.Success(
+      ToyLanguageParser.parse(program) should matchPattern {
+        case ToyLanguageParser.Success(
               List(If(BinOp(Var("x"), ">", Num(0)), List(Print(Var("x"))), Some(List(Print(Num(0)))))),
               _,
             ) =>
@@ -87,21 +85,32 @@ class ToyLanguageTests extends AnyFreeSpec with Matchers {
   "indentation tests" - {
     "debug token stream" in {
       val program = "if x > 0 then\n    print x"
-      val tokens  = parser.lexical.scan(program)
+      val tokens  = ToyLanguageParser.lexical.scan(program)
       println(s"Tokens for '$program': $tokens")
       // This test is just for debugging - it will always pass
+      tokens.length should be > 0
+    }
+
+    "debug nested if token stream" in {
+      val program = "if x > 0 then\n    if x > 10 then\n        print 1\n    else\n        print 2\nelse\n    print 3"
+      val tokens  = ToyLanguageParser.lexical.scan(program)
+      println(s"Nested tokens: $tokens")
+      // Count indents and dedents
+      val indentCount = tokens.count(_ == ToyLanguageParser.lexical.Indent)
+      val dedentCount = tokens.count(_ == ToyLanguageParser.lexical.Dedent)
+      println(s"Indents: $indentCount, Dedents: $dedentCount")
       tokens.length should be > 0
     }
 
     "nested if statements" in {
       val program = "if x > 0 then\n    if x > 10 then\n        print 1\n    else\n        print 2\nelse\n    print 3"
 
-      val result = parser.parse(program)
-      result should matchPattern { case parser.Success(_, _) => }
+      val result = ToyLanguageParser.parse(program)
+      result should matchPattern { case ToyLanguageParser.Success(_, _) => }
 
       // Verify structure
       result match {
-        case parser.Success(List(If(_, thenBlock, Some(elseBlock))), _) =>
+        case ToyLanguageParser.Success(List(If(_, thenBlock, Some(elseBlock))), _) =>
           thenBlock should have length 1
           thenBlock.head should matchPattern { case If(_, _, _) => }
           elseBlock should have length 1
@@ -112,11 +121,11 @@ class ToyLanguageTests extends AnyFreeSpec with Matchers {
     "multiple statements in blocks" in {
       val program = "if x > 0 then\n    y = x + 1\n    z = y * 2\n    print z\nprint y"
 
-      val result = parser.parse(program)
-      result should matchPattern { case parser.Success(_, _) => }
+      val result = ToyLanguageParser.parse(program)
+      result should matchPattern { case ToyLanguageParser.Success(_, _) => }
 
       result match {
-        case parser.Success(stmts, _) =>
+        case ToyLanguageParser.Success(stmts, _) =>
           stmts should have length 2
           stmts.head should matchPattern { case If(_, List(_, _, _), None) => }
         case _ => fail("Expected successful parse")
@@ -127,8 +136,8 @@ class ToyLanguageTests extends AnyFreeSpec with Matchers {
       val program =
         "if a > 0 then\n    if b > 0 then\n        if c > 0 then\n            print 1\n        print 2\n    print 3\nprint 4"
 
-      val result = parser.parse(program)
-      result should matchPattern { case parser.Success(List(_, Print(Num(4))), _) => }
+      val result = ToyLanguageParser.parse(program)
+      result should matchPattern { case ToyLanguageParser.Success(List(_, Print(Num(4))), _) => }
     }
   }
 
@@ -136,13 +145,13 @@ class ToyLanguageTests extends AnyFreeSpec with Matchers {
     "basic assignment and print" in {
       val program = "x = 42\nprint x"
 
-      val parseResult = parser.parse(program)
-      parseResult should matchPattern { case parser.Success(_, _) => }
+      val parseResult = ToyLanguageParser.parse(program)
+      parseResult should matchPattern { case ToyLanguageParser.Success(_, _) => }
 
       val output = captureOutput {
         parseResult match {
-          case parser.Success(ast, _) => ToyInterpreter.run(ast)
-          case _                      => fail("Parse failed")
+          case ToyLanguageParser.Success(ast, _) => ToyInterpreter.run(ast)
+          case _                                 => fail("Parse failed")
         }
       }
       output shouldBe "42"
@@ -152,9 +161,9 @@ class ToyLanguageTests extends AnyFreeSpec with Matchers {
       val program = "x = 2 + 3 * 4\nprint x"
 
       val output = captureOutput {
-        parser.parse(program) match {
-          case parser.Success(ast, _) => ToyInterpreter.run(ast)
-          case failure                => fail(s"Parse failed: $failure")
+        ToyLanguageParser.parse(program) match {
+          case ToyLanguageParser.Success(ast, _) => ToyInterpreter.run(ast)
+          case failure                           => fail(s"Parse failed: $failure")
         }
       }
       output shouldBe "14" // 2 + (3 * 4)
@@ -164,9 +173,9 @@ class ToyLanguageTests extends AnyFreeSpec with Matchers {
       val program = "x = 5\nif x > 3 then\n    print 1\nelse\n    print 0"
 
       val output = captureOutput {
-        parser.parse(program) match {
-          case parser.Success(ast, _) => ToyInterpreter.run(ast)
-          case failure                => fail(s"Parse failed: $failure")
+        ToyLanguageParser.parse(program) match {
+          case ToyLanguageParser.Success(ast, _) => ToyInterpreter.run(ast)
+          case failure                           => fail(s"Parse failed: $failure")
         }
       }
       output shouldBe "1"
@@ -177,9 +186,9 @@ class ToyLanguageTests extends AnyFreeSpec with Matchers {
         "x = 15\nif x > 10 then\n    if x > 20 then\n        print 3\n    else\n        print 2\nelse\n    print 1"
 
       val output = captureOutput {
-        parser.parse(program) match {
-          case parser.Success(ast, _) => ToyInterpreter.run(ast)
-          case failure                => fail(s"Parse failed: $failure")
+        ToyLanguageParser.parse(program) match {
+          case ToyLanguageParser.Success(ast, _) => ToyInterpreter.run(ast)
+          case failure                           => fail(s"Parse failed: $failure")
         }
       }
       output shouldBe "2"
@@ -190,9 +199,9 @@ class ToyLanguageTests extends AnyFreeSpec with Matchers {
         "a = 1\nb = 2\nif a < b then\n    sum = a + b\n    product = a * b\n    if sum > product then\n        print sum\n    else\n        print product\nelse\n    print 0"
 
       val output = captureOutput {
-        parser.parse(program) match {
-          case parser.Success(ast, _) => ToyInterpreter.run(ast)
-          case failure                => fail(s"Parse failed: $failure")
+        ToyLanguageParser.parse(program) match {
+          case ToyLanguageParser.Success(ast, _) => ToyInterpreter.run(ast)
+          case failure                           => fail(s"Parse failed: $failure")
         }
       }
       output shouldBe "3" // sum (1+2) > product (1*2)
@@ -204,9 +213,9 @@ class ToyLanguageTests extends AnyFreeSpec with Matchers {
       val program = "result = (1 +\n          2 +\n          3)\nprint result"
 
       val output = captureOutput {
-        parser.parse(program) match {
-          case parser.Success(ast, _) => ToyInterpreter.run(ast)
-          case failure                => fail(s"Parse failed: $failure")
+        ToyLanguageParser.parse(program) match {
+          case ToyLanguageParser.Success(ast, _) => ToyInterpreter.run(ast)
+          case failure                           => fail(s"Parse failed: $failure")
         }
       }
       output shouldBe "6"
@@ -217,16 +226,16 @@ class ToyLanguageTests extends AnyFreeSpec with Matchers {
     "syntax error" in {
       val program = "x = \nprint x"
 
-      parser.parse(program) should matchPattern {
-        case parser.NoSuccess(_, _) =>
+      ToyLanguageParser.parse(program) should matchPattern {
+        case ToyLanguageParser.NoSuccess(_, _) =>
       }
     }
 
     "missing indent" in {
       val program = "if x > 0 then\nprint x"
 
-      parser.parse(program) should matchPattern {
-        case parser.NoSuccess(_, _) =>
+      ToyLanguageParser.parse(program) should matchPattern {
+        case ToyLanguageParser.NoSuccess(_, _) =>
       }
     }
   }

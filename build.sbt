@@ -66,7 +66,7 @@ lazy val indentation = crossProject(JSPlatform, JVMPlatform, NativePlatform)
 //    ),
     libraryDependencies ++= Seq(
 //      "com.github.scopt" %%% "scopt" % "4.1.0",
-//      "com.lihaoyi" %%% "pprint" % "0.9.0" % "test",
+      "com.lihaoyi" %%% "pprint" % "0.9.0" % "test",
     ),
     publishMavenStyle      := true,
     Test / publishArtifact := false,

@@ -15,7 +15,7 @@ case class Var(name: String)                          extends Expr
 case class Num(value: Int)                            extends Expr
 case class BinOp(left: Expr, op: String, right: Expr) extends Expr
 
-class ToyLanguageParser extends StandardTokenParsers with PackratParsers {
+object ToyLanguageParser extends StandardTokenParsers with PackratParsers {
 
   override val lexical: IndentationLexical = new IndentationLexical(
     newlineBeforeIndent = true, // Changed to true!

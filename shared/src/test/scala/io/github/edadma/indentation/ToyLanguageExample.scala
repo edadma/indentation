@@ -1,8 +1,6 @@
 package io.github.edadma.indentation
 
-@main def runExample(): Unit = {
-
-  val parser = new ToyLanguageParser
+def runExample(): Unit = {
 
   // Example 1: Simple program
   val program1 = """
@@ -22,10 +20,10 @@ package io.github.edadma.indentation
   println(program1)
   println("\nOutput:")
 
-  parser.parse(program1) match {
-    case parser.Success(ast, _) =>
+  ToyLanguageParser.parse(program1) match {
+    case ToyLanguageParser.Success(ast, _) =>
       ToyInterpreter.run(ast)
-    case parser.NoSuccess(msg, _) =>
+    case ToyLanguageParser.NoSuccess(msg, _) =>
       println(s"Parse error: $msg")
   }
 
@@ -49,10 +47,10 @@ package io.github.edadma.indentation
   println(program2)
   println("\nOutput:")
 
-  parser.parse(program2) match {
-    case parser.Success(ast, _) =>
+  ToyLanguageParser.parse(program2) match {
+    case ToyLanguageParser.Success(ast, _) =>
       ToyInterpreter.run(ast)
-    case parser.NoSuccess(msg, _) =>
+    case ToyLanguageParser.NoSuccess(msg, _) =>
       println(s"Parse error: $msg")
   }
 
@@ -75,10 +73,10 @@ package io.github.edadma.indentation
   println(program3)
   println("\nOutput:")
 
-  parser.parse(program3) match {
-    case parser.Success(ast, _) =>
+  ToyLanguageParser.parse(program3) match {
+    case ToyLanguageParser.Success(ast, _) =>
       ToyInterpreter.run(ast)
-    case parser.NoSuccess(msg, _) =>
+    case ToyLanguageParser.NoSuccess(msg, _) =>
       println(s"Parse error: $msg")
   }
 
@@ -95,10 +93,10 @@ package io.github.edadma.indentation
   println(program4)
   println("\nOutput:")
 
-  parser.parse(program4) match {
-    case parser.Success(ast, _) =>
+  ToyLanguageParser.parse(program4) match {
+    case ToyLanguageParser.Success(ast, _) =>
       ToyInterpreter.run(ast)
-    case parser.NoSuccess(msg, _) =>
+    case ToyLanguageParser.NoSuccess(msg, _) =>
       println(s"Parse error: $msg")
   }
 
@@ -115,6 +113,6 @@ package io.github.edadma.indentation
   println(simpleProgram)
   println("\nTokens:")
 
-  val tokens = parser.lexical.scan(simpleProgram)
+  val tokens = ToyLanguageParser.lexical.scan(simpleProgram)
   tokens.foreach(token => println(s"  $token"))
 }
