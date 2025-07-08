@@ -6,16 +6,12 @@ ThisBuild / organization           := "io.github.edadma"
 ThisBuild / organizationName       := "edadma"
 ThisBuild / organizationHomepage   := Some(url("https://github.com/edadma"))
 ThisBuild / version                := "0.0.1"
-ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
-ThisBuild / sonatypeRepository     := "https://s01.oss.sonatype.org/service/local"
+ThisBuild / sonatypeCredentialHost := "central.sonatype.com"
 
 ThisBuild / publishConfiguration := publishConfiguration.value.withOverwrite(true).withChecksums(Vector.empty)
-ThisBuild / resolvers ++= Seq(
-  Resolver.mavenLocal,
-)
-
+ThisBuild / resolvers += Resolver.mavenLocal
 ThisBuild / resolvers += Resolver.sonatypeCentralSnapshots
-//ThisBuild / resolvers ++= Resolver.sonatypeOssRepos("snapshots") ++ Resolver.sonatypeOssRepos("releases")
+ThisBuild / resolvers += Resolver.sonatypeCentralRepo("releases")
 
 ThisBuild / sonatypeProfileName := "io.github.edadma"
 
@@ -36,13 +32,11 @@ ThisBuild / developers := List(
 
 ThisBuild / homepage := Some(url("https://github.com/edadma/indentation"))
 
-ThisBuild / pomIncludeRepository := { _ => false }
-ThisBuild / publishTo            := {
-  val nexus = "https://s01.oss.sonatype.org/"
-  if (isSnapshot.value) Some("snapshots" at nexus + "content/repositories/snapshots")
-  else Some("releases" at nexus + "service/local/staging/deploy/maven2")
+ThisBuild / publishTo := {
+  val centralSnapshots = "https://central.sonatype.com/repository/maven-snapshots/"
+  if (isSnapshot.value) Some("central-snapshots" at centralSnapshots)
+  else localStaging.value
 }
-ThisBuild / publishMavenStyle := true
 
 lazy val indentation = crossProject(JSPlatform, JVMPlatform, NativePlatform)
   .in(file("."))
@@ -76,8 +70,7 @@ lazy val indentation = crossProject(JSPlatform, JVMPlatform, NativePlatform)
     libraryDependencies += "org.scala-js" %% "scalajs-stubs" % "1.1.0" % "provided",
   )
   .nativeSettings(
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0",
-    libraryDependencies += "org.scala-js"       %% "scalajs-stubs"   % "1.1.0" % "provided",
+    libraryDependencies += "org.scala-js" %% "scalajs-stubs" % "1.1.0" % "provided",
   )
   .jsSettings(
     jsEnv := new org.scalajs.jsenv.nodejs.NodeJSEnv(),
@@ -86,10 +79,9 @@ lazy val indentation = crossProject(JSPlatform, JVMPlatform, NativePlatform)
     scalaJSLinkerConfig ~= { _.withSourceMap(false) },
     //    Test / scalaJSUseMainModuleInitializer := true,
     //    Test / scalaJSUseTestModuleInitializer := false,
-    Test / scalaJSUseMainModuleInitializer      := false,
-    Test / scalaJSUseTestModuleInitializer      := true,
-    scalaJSUseMainModuleInitializer             := true,
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0",
+    Test / scalaJSUseMainModuleInitializer := false,
+    Test / scalaJSUseTestModuleInitializer := true,
+    scalaJSUseMainModuleInitializer        := true,
   )
 
 lazy val root = project
