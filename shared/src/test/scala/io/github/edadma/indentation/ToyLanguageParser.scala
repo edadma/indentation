@@ -45,7 +45,7 @@ object ToyLanguageParser extends StandardTokenParsers with PackratParsers {
 
   // Grammar rules
   lazy val program: PackratParser[List[Stmt]] =
-    rep(statement) <~ opt(Newline)
+    repsep(statement, rep1(Newline)) <~ opt(rep(Newline))
 
   lazy val statement: PackratParser[Stmt] =
     assignment |
@@ -53,21 +53,22 @@ object ToyLanguageParser extends StandardTokenParsers with PackratParsers {
       printStatement
 
   lazy val assignment: PackratParser[Assign] =
-    ident ~ "=" ~ expr <~ Newline ^^ { case id ~ _ ~ value => Assign(id, value) }
+    ident ~ "=" ~ expr ^^ { case id ~ _ ~ value => Assign(id, value) }
+
+  lazy val block: PackratParser[List[Stmt]] =
+    Newline ~ Indent ~> repsep(statement, rep1(Newline)) <~ opt(Newline) <~ Dedent
 
   lazy val ifStatement: PackratParser[If] =
-    "if" ~ expr ~ "then" ~ Newline ~ Indent ~ rep1(statement) ~ Dedent ~ opt(elseClause) ^^ {
-      case _ ~ condition ~ _ ~ _ ~ _ ~ thenStmts ~ _ ~ elseStmts =>
+    "if" ~ expr ~ "then" ~ block ~ opt(opt(Newline) ~> elseClause) ^^ {
+      case _ ~ condition ~ _ ~ thenStmts ~ elseStmts =>
         If(condition, thenStmts, elseStmts)
     }
 
   lazy val elseClause: PackratParser[List[Stmt]] =
-    opt(Newline) ~ "else" ~ Newline ~ Indent ~ rep1(statement) ~ Dedent ^^ {
-      case _ ~ _ ~ _ ~ _ ~ elseStmts ~ _ => elseStmts
-    }
+    "else" ~> block
 
   lazy val printStatement: PackratParser[Print] =
-    "print" ~ expr <~ Newline ^^ { case _ ~ value => Print(value) }
+    "print" ~ expr ^^ { case _ ~ value => Print(value) }
 
   // Expression parsing with left recursion (thanks to packrat!)
   lazy val expr: PackratParser[Expr] =
@@ -98,7 +99,7 @@ object ToyLanguageParser extends StandardTokenParsers with PackratParsers {
 }
 
 // Simple interpreter for testing
-object ToyInterpreter {
+class ToyInterpreter(output: Int => Unit = v => println(v)) {
   type Env = scala.collection.mutable.Map[String, Int]
 
   def run(program: List[Stmt]): Unit = {
@@ -119,8 +120,7 @@ object ToyInterpreter {
       }
 
     case Print(expr) =>
-      val value = evaluateExpr(expr, env)
-      println(value)
+      output(evaluateExpr(expr, env))
   }
 
   def evaluateExpr(expr: Expr, env: Env): Int = expr match {

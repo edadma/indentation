@@ -32,5 +32,5 @@ import pprint.pprintln
     }
 
   pprintln(ast)
-  ToyInterpreter.run(ast)
+  new ToyInterpreter().run(ast)
 }

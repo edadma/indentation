@@ -1,12 +1,14 @@
-ThisBuild / licenses += "ISC"      -> url("https://opensource.org/licenses/ISC")
+import xerial.sbt.Sonatype.sonatypeCentralHost
+
+ThisBuild / licenses               := Seq("ISC" -> url("https://opensource.org/licenses/ISC"))
 ThisBuild / versionScheme          := Some("semver-spec")
 ThisBuild / evictionErrorLevel     := Level.Warn
-ThisBuild / scalaVersion           := "3.7.1"
+ThisBuild / scalaVersion           := "3.8.2"
 ThisBuild / organization           := "io.github.edadma"
 ThisBuild / organizationName       := "edadma"
 ThisBuild / organizationHomepage   := Some(url("https://github.com/edadma"))
-ThisBuild / version                := "0.0.1"
-ThisBuild / sonatypeCredentialHost := "central.sonatype.com"
+ThisBuild / version                := "0.0.2"
+ThisBuild / sonatypeCredentialHost := sonatypeCentralHost
 
 ThisBuild / publishConfiguration := publishConfiguration.value.withOverwrite(true).withChecksums(Vector.empty)
 ThisBuild / resolvers += Resolver.mavenLocal
@@ -30,13 +32,10 @@ ThisBuild / developers := List(
   ),
 )
 
-ThisBuild / homepage := Some(url("https://github.com/edadma/indentation"))
+ThisBuild / homepage    := Some(url("https://github.com/edadma/indentation"))
+ThisBuild / description := "Indentation-sensitive lexical analysis for Scala parser combinators"
 
-ThisBuild / publishTo := {
-  val centralSnapshots = "https://central.sonatype.com/repository/maven-snapshots/"
-  if (isSnapshot.value) Some("central-snapshots" at centralSnapshots)
-  else localStaging.value
-}
+ThisBuild / publishTo := sonatypePublishToBundle.value
 
 lazy val indentation = crossProject(JSPlatform, JVMPlatform, NativePlatform)
   .in(file("."))
@@ -54,17 +53,11 @@ lazy val indentation = crossProject(JSPlatform, JVMPlatform, NativePlatform)
       ),
     libraryDependencies += "org.scala-lang.modules" %%% "scala-parser-combinators" % "2.4.0",
     libraryDependencies += "org.scalatest"          %%% "scalatest"                % "3.2.19" % "test",
-    libraryDependencies += "org.scalacheck"          %% "scalacheck"               % "1.18.1" % "test",
-//    libraryDependencies ++= Seq(
-//      "io.github.edadma" %%% "cross-platform" % "0.0.10"
-//    ),
     libraryDependencies ++= Seq(
-//      "com.github.scopt" %%% "scopt" % "4.1.0",
       "com.lihaoyi" %%% "pprint" % "0.9.0" % "test",
     ),
     publishMavenStyle      := true,
     Test / publishArtifact := false,
-    licenses += "ISC"      -> url("https://opensource.org/licenses/ISC"),
   )
   .jvmSettings(
     libraryDependencies += "org.scala-js" %% "scalajs-stubs" % "1.1.0" % "provided",
@@ -75,10 +68,7 @@ lazy val indentation = crossProject(JSPlatform, JVMPlatform, NativePlatform)
   .jsSettings(
     jsEnv := new org.scalajs.jsenv.nodejs.NodeJSEnv(),
     scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) },
-    //  scalaJSLinkerConfig ~= { _.withModuleSplitStyle(ModuleSplitStyle.SmallestModules) },
     scalaJSLinkerConfig ~= { _.withSourceMap(false) },
-    //    Test / scalaJSUseMainModuleInitializer := true,
-    //    Test / scalaJSUseTestModuleInitializer := false,
     Test / scalaJSUseMainModuleInitializer := false,
     Test / scalaJSUseTestModuleInitializer := true,
     scalaJSUseMainModuleInitializer        := true,
