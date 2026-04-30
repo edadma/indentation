@@ -7,6 +7,24 @@ import scala.util.parsing.input.{CharSequenceReader, Position, Reader}
 import scala.collection.mutable.{ListBuffer, Stack}
 import scala.compiletime.uninitialized
 
+/** Indentation-aware lexer with optional line-joining inside paren / brace / bracket
+ *  pairs.
+ *
+ *  `blockTriggerToken` opt-in: when set (e.g. `Some("->")`), the lexer recognizes
+ *  it as the start of an indented block body and **suspends line-joining** for the
+ *  body's extent — even when the trigger appears inside an outer paren context.
+ *  Concretely: if the trigger token is the most recently emitted real token and
+ *  the very next character begins a newline while `lineJoining > 0`, the lexer
+ *  records the current `lineJoining` count + indent level on a stack, sets
+ *  `lineJoining = 0`, and proceeds with normal Newline/Indent/Dedent emission for
+ *  the body. When dedent brings the indent stack back at or below the recorded
+ *  level, the frame is popped and `lineJoining` is restored — so the rest of the
+ *  enclosing call's argument list parses normally.
+ *
+ *  Without this feature, multi-statement closure bodies inside parens (e.g.
+ *  `f((x: int) -> \n var acc = 0 \n acc + 1)`) cannot parse, because the lexer
+ *  suppresses the Newline/Indent/Dedent tokens that the block-statement parser
+ *  needs. */
 class IndentationLexical(
     newlineBeforeIndent: Boolean,
     newlineAfterDedent: Boolean,
@@ -15,6 +33,7 @@ class IndentationLexical(
     lineComment: String,
     blockCommentStart: String,
     blockCommentEnd: String,
+    blockTriggerToken: Option[String] = None,
 ) extends StdLexical {
 
   private val level                  = new mutable.Stack[Int]
@@ -25,6 +44,23 @@ class IndentationLexical(
   private var lineJoining            = 0
   private val startLineJoiningTokens = startLineJoining map (Keyword(_))
   private val endLineJoiningTokens   = endLineJoining map (Keyword(_))
+  private val triggerKeyword: Option[Keyword] = blockTriggerToken.map(Keyword(_))
+  // Frames pushed when `triggerKeyword` is followed by an indented block while in
+  // line-joining mode. Each frame is (savedLineJoining, levelTopBeforeBody).
+  private val joiningFrames          = new mutable.Stack[(Int, Int)]
+  // Most recently emitted non-structural token (used to detect "the trigger token
+  // immediately precedes a newline").
+  private var lastEmittedToken: Token = null
+  // Single-char close-line-joining markers — used to terminate a triggered block
+  // body when the matching close-delim appears on the body's last line (rather
+  // than on a fresh dedented line).
+  private val endLineJoiningChars: Set[Char] =
+    endLineJoining.collect { case s if s.length == 1 => s.charAt(0) }.toSet
+  // True while we're emitting a drain-triggered Dedent sequence — used to suppress
+  // the trailing post-Dedent Newline that newlineAfterDedent normally emits, since
+  // there is no real Newline character at the outer indent (the next character is
+  // the close-delim, e.g. `)`).
+  private var drainDedent: Boolean = false
 
   case object Newline extends Token { val chars = "newline" }
   case object Indent  extends Token { val chars = "indent"  }
@@ -105,6 +141,8 @@ class IndentationLexical(
     finalnl = false
     dedentnl = false
     lineJoining = 0
+    joiningFrames.clear()
+    lastEmittedToken = null
     new IndentationScanner(skipBlankLines(in))
   }
 
@@ -114,6 +152,14 @@ class IndentationLexical(
   private val INDENT_STATE  = 2
   private val DEDENT_STATE  = 3
   private val NEWLINE_STATE = 4
+
+  // After level.pop(), restore line-joining if we've dedented back to the level
+  // recorded on the most recent block-trigger frame.
+  private def maybeRestoreJoiningFrame(): Unit =
+    while (joiningFrames.nonEmpty && level.nonEmpty && level.top <= joiningFrames.top._2) {
+      val (savedJoining, _) = joiningFrames.pop()
+      lineJoining = savedJoining
+    }
 
   class IndentationScanner(in: Reader[Char]) extends Reader[Token] {
 
@@ -144,6 +190,7 @@ class IndentationLexical(
                       else if (endLineJoiningTokens contains tok)
                         lineJoining -= 1
 
+                      lastEmittedToken = tok
                       (tok, in1, in2)
                     case ns: NoSuccess => (errorToken(ns.msg), ns.next, skip(ns.next))
                   }
@@ -197,6 +244,7 @@ class IndentationLexical(
             dedentnl = true
 
           level.pop()
+          maybeRestoreJoiningFrame()
           new IndentationScanner(rest1)
         } else
           sys.error("no more tokens")
@@ -222,37 +270,72 @@ class IndentationLexical(
 
       state match {
         case BLOCK_STATE =>
+          // Drain dedents when a triggered block body is about to be closed by the
+          // matching close-line-joining delimiter on the body's same indent line
+          // (e.g. `f((x) -> \n var acc = 0 \n acc + 1)` — the `)` terminates the
+          // body before being processed as the call's close). Without this, the
+          // block-statement parser would never see its terminating Dedent.
+          // Only drain when we're at the body's *outer* level (lineJoining == 0
+           // inside the suspended frame). When we're inside nested parens within
+           // the body (e.g. `p(inp)` mid-body), lineJoining > 0 and the
+           // close-delim belongs to the inner pair, not the body terminator.
+           // We drain on the matching close-delim (`)` / `]` / `}`) and on `,`
+           // (the next-arg separator of the enclosing call/tuple) — both signal
+           // end-of-body when seen at the body's outer level.
+          if (!in.atEnd && joiningFrames.nonEmpty
+              && lineJoining == 0
+              && level.top > joiningFrames.top._2
+              && (endLineJoiningChars.contains(in.first) || in.first == ',')) {
+            current = joiningFrames.top._2
+            state = DEDENT_STATE
+            drainDedent = true
+            level.pop()
+            maybeRestoreJoiningFrame()
+            return Success(Newline, in)
+          }
           if (in.atEnd || in.first != '\n')
             Failure(null, in)
-          else if (lineJoining > 0)
-            Failure(null, in)
           else {
-            val in1 = skipBlankLines(in.rest)
+            // Block-trigger handling: if `lineJoining > 0` (we're inside parens) but
+            // the most recently emitted token is the configured trigger (e.g. `->`),
+            // suspend line-joining for the body. Push a frame so we can restore it
+            // when dedent brings indentation back to (or below) the trigger's level.
+            val triggered = lineJoining > 0 && triggerKeyword.exists(tk => lastEmittedToken == tk)
+            if (lineJoining > 0 && !triggered)
+              Failure(null, in)
+            else {
+              if (triggered) {
+                joiningFrames.push((lineJoining, level.top))
+                lineJoining = 0
+              }
+              val in1 = skipBlankLines(in.rest)
 
-            if (in1.atEnd) {
-              Failure(null, in1)
-            } else {
-              val (c, r) = indents(in1.first, 0, in1)
+              if (in1.atEnd) {
+                Failure(null, in1)
+              } else {
+                val (c, r) = indents(in1.first, 0, in1)
 
-              if (skipSpace(in1).pos != r.pos)
-                Error("only tabs or spaces (but not both on a given line) may be used for indentation", in1)
-              else {
-                if (c > level.top) {
-                  level.push(c)
+                if (skipSpace(in1).pos != r.pos)
+                  Error("only tabs or spaces (but not both on a given line) may be used for indentation", in1)
+                else {
+                  if (c > level.top) {
+                    level.push(c)
 
-                  if (newlineBeforeIndent) {
-                    state = INDENT_STATE
+                    if (newlineBeforeIndent) {
+                      state = INDENT_STATE
+                      Success(Newline, r)
+                    } else {
+                      Success(Indent, r)
+                    }
+                  } else if (c < level.top) {
+                    current = c
+                    state = DEDENT_STATE
+                    level.pop()
+                    maybeRestoreJoiningFrame()
                     Success(Newline, r)
                   } else {
-                    Success(Indent, r)
+                    Success(Newline, r)
                   }
-                } else if (c < level.top) {
-                  current = c
-                  state = DEDENT_STATE
-                  level.pop()
-                  Success(Newline, r)
-                } else {
-                  Success(Newline, r)
                 }
               }
             }
@@ -261,19 +344,27 @@ class IndentationLexical(
           state = BLOCK_STATE
           Success(Indent, in)
         case DEDENT_STATE =>
-          if (newlineAfterDedent)
+          // For drain-triggered dedents we skip the post-Dedent Newline because the
+          // matching close-delim is the very next character — there is no physical
+          // newline to represent.
+          if (newlineAfterDedent && !drainDedent)
             state = NEWLINE_STATE
-          else
-            if (current < level.top)
+          else {
+            if (current < level.top) {
               level.pop()
-            else
+              maybeRestoreJoiningFrame()
+            } else
               state = BLOCK_STATE
+            if (drainDedent && state == BLOCK_STATE)
+              drainDedent = false
+          }
 
           Success(Dedent, in)
         case NEWLINE_STATE =>
           if (current < level.top) {
             state = DEDENT_STATE
             level.pop()
+            maybeRestoreJoiningFrame()
           } else
             state = BLOCK_STATE
 
