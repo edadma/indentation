@@ -66,6 +66,21 @@ class IndentationLexical(
   case object Indent  extends Token { val chars = "indent"  }
   case object Dedent  extends Token { val chars = "dedent"  }
 
+  /** Override to mark a token as one that, when it appears immediately before a
+   *  newline outside any paren/bracket/brace pair, should suppress the implicit
+   *  Newline (and any following indent change) — i.e. treat the next line as a
+   *  continuation of the current expression. Mirrors what `(` `[` `{` already
+   *  do via `lineJoining`, but driven by the *trailing* token instead of the
+   *  enclosing-pair counter.
+   *
+   *  The default returns false (no trailing-token continuation; only paren-pair
+   *  joining is in effect). Subclasses should return true for binary operators
+   *  whose presence at end-of-line unambiguously signals "RHS coming" — and
+   *  must NOT include tokens that legitimately end a statement (postfix `++` /
+   *  `--`) or that drive their own indented-block parser construct (`=`, `->`,
+   *  `=>`). */
+  protected def isLineContinuationToken(tok: Token): Boolean = false
+
   def num(s: String) = NumericLit(s)
 
   def scan(s: String): List[Token] = {
@@ -301,7 +316,12 @@ class IndentationLexical(
             // suspend line-joining for the body. Push a frame so we can restore it
             // when dedent brings indentation back to (or below) the trigger's level.
             val triggered = lineJoining > 0 && triggerKeyword.exists(tk => lastEmittedToken == tk)
-            if (lineJoining > 0 && !triggered)
+            // Trailing-token continuation: outside any paren/bracket/brace pair, a
+            // trailing operator (per `isLineContinuationToken`) suppresses the
+            // implicit newline so the RHS can live on the next indented line.
+            val trailingContinuation =
+              lineJoining == 0 && lastEmittedToken != null && isLineContinuationToken(lastEmittedToken)
+            if ((lineJoining > 0 && !triggered) || trailingContinuation)
               Failure(null, in)
             else {
               if (triggered) {
