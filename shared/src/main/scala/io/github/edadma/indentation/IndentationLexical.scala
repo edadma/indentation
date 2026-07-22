@@ -218,8 +218,10 @@ class IndentationLexical(
 
     private def skip(in: Reader[Char]) = if (in.atEnd) in else in.rest
 
+    /** The underlying character sequence being scanned. */
     override def source: java.lang.CharSequence = in.source
 
+    /** Offset into `source` of the current position. */
     override def offset: Int = in.offset
 
     private def atend = in.atEnd || (skipWhiteSpace(in) match {

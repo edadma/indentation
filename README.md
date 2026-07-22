@@ -3,16 +3,16 @@
 ![Maven Central](https://img.shields.io/maven-central/v/io.github.edadma/indentation_sjs1_3)
 [![Last Commit](https://img.shields.io/github/last-commit/edadma/indentation)](https://github.com/edadma/indentation/commits)
 ![GitHub](https://img.shields.io/github/license/edadma/indentation)
-![Scala Version](https://img.shields.io/badge/Scala-3.8.2-blue.svg)
-![ScalaJS Version](https://img.shields.io/badge/Scala.js-1.20.2-blue.svg)
-![Scala Native Version](https://img.shields.io/badge/Scala_Native-0.5.10-blue.svg)
+![Scala Version](https://img.shields.io/badge/Scala-3.8.4-blue.svg)
+![ScalaJS Version](https://img.shields.io/badge/Scala.js-1.21.0-blue.svg)
+![Scala Native Version](https://img.shields.io/badge/Scala_Native-0.5.12-blue.svg)
 
 A Scala library for indentation-sensitive lexical analysis using parser combinators. Extends `StdLexical` to automatically generate `INDENT`, `DEDENT`, and `NEWLINE` tokens for Python-style block structure.
 
 ## Installation
 
 ```scala
-libraryDependencies += "io.github.edadma" %%% "indentation" % "0.0.2"
+libraryDependencies += "io.github.edadma" %%% "indentation" % "0.0.3"
 ```
 
 Cross-compiled for JVM, Scala.js, and Scala Native.
@@ -77,6 +77,7 @@ Note: create a new parser instance per parse call, as `StandardTokenParsers` has
 | `lineComment` | Line comment prefix (e.g., `"//"`, `"#"`) |
 | `blockCommentStart` | Block comment start delimiter (e.g., `"/*"`) |
 | `blockCommentEnd` | Block comment end delimiter (e.g., `"*/"`) |
+| `blockTriggerToken` | Optional token that opens an indented block even inside a line-joining context (e.g., `Some("->")`). Default `None` — see [Block Trigger Token](#block-trigger-token) |
 
 ## Token Types
 
@@ -104,6 +105,75 @@ result = (1 +
 ```
 
 Configure which tokens trigger line joining via `startLineJoining` and `endLineJoining`.
+
+## Block Trigger Token
+
+Line joining normally suppresses *all* indentation tokens inside brackets — which is a problem
+when a construct legitimately opens an indented block *within* a bracketed context. The classic
+case is a multi-statement closure body passed as an argument:
+
+```
+f((x) ->
+    var acc = 0
+    acc + 1)
+```
+
+Because the body sits inside `(`...`)`, line joining would suppress the `Newline`/`Indent`/
+`Dedent` tokens that a block-statement parser needs, and the body cannot parse.
+
+Setting `blockTriggerToken` opts into a fix. When the configured token (here `"->"`) is the most
+recently emitted token and a newline follows, the lexer **suspends line joining** for the extent
+of the block body and resumes normal `Newline`/`Indent`/`Dedent` emission. When dedenting returns
+to the trigger's indentation level, line joining is restored so the rest of the enclosing
+argument list parses normally.
+
+```scala
+new IndentationLexical(
+  newlineBeforeIndent = true,
+  newlineAfterDedent = true,
+  startLineJoining = List("(", "["),
+  endLineJoining = List(")", "]"),
+  lineComment = "//",
+  blockCommentStart = "/*",
+  blockCommentEnd = "*/",
+  blockTriggerToken = Some("->")
+)
+```
+
+Default is `None`, in which case the feature is entirely inert.
+
+## Trailing-Operator Continuation
+
+Bracket line joining handles continuation driven by an *enclosing pair*. The opposite case —
+continuation driven by the *trailing token* — is available by overriding
+`isLineContinuationToken`:
+
+```scala
+new IndentationLexical(/* ... */) {
+  private val opChars = Set('+', '-', '*', '/', '<', '>', '=', '&', '|', '^')
+
+  override protected def isLineContinuationToken(tok: Token): Boolean = tok match {
+    case k: Keyword => k.chars.nonEmpty && k.chars.forall(opChars.contains)
+    case _          => false
+  }
+}
+```
+
+When a token satisfying this predicate appears immediately before a newline **outside** any
+bracket pair, the implicit `Newline` (and any following indentation change) is suppressed, so the
+next line continues the current expression:
+
+```
+total = a +
+        b
+```
+
+The default implementation returns `false`, so only bracket line joining applies.
+
+**Choose the token set carefully.** Return `true` only for tokens whose presence at end-of-line
+unambiguously means "right-hand side follows." Do **not** include tokens that can legitimately
+end a statement (such as postfix `++` / `--`), or tokens that drive their own indented-block
+construct (such as `=`, `->`, `=>`) — those would swallow the block's `Newline`.
 
 ## Building
 
