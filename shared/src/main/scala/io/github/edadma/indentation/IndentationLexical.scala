@@ -1,5 +1,6 @@
 package io.github.edadma.indentation
 
+import scala.annotation.tailrec
 import scala.collection.mutable
 import scala.util.parsing.combinator.lexical.StdLexical
 import scala.util.parsing.combinator.token.Tokens
@@ -24,7 +25,13 @@ import scala.compiletime.uninitialized
  *  Without this feature, multi-statement closure bodies inside parens (e.g.
  *  `f((x: int) -> \n var acc = 0 \n acc + 1)`) cannot parse, because the lexer
  *  suppresses the Newline/Indent/Dedent tokens that the block-statement parser
- *  needs. */
+ *  needs.
+ *
+ *  Comments use the configured `lineComment`, `blockCommentStart` and
+ *  `blockCommentEnd` in every position — at the start of a line and in the middle
+ *  of one alike. Block comments nest, so a region that already contains a comment
+ *  can be commented out. A block comment that is never closed produces an error
+ *  token at its opening delimiter rather than raising. */
 class IndentationLexical(
     newlineBeforeIndent: Boolean,
     newlineAfterDedent: Boolean,
@@ -122,6 +129,42 @@ class IndentationLexical(
 
   private def skipToEOL(r: Reader[Char]) = skip(r, a => a.atEnd || a.first == '\n')
 
+  private def skipToEnd(r: Reader[Char]) = skip(r, _.atEnd)
+
+  /** Message carried by the error token reported for a block comment that is never
+   *  closed. The scanner recognizes it so that the remainder of the input — which
+   *  is all comment text — is consumed rather than lexed into spurious tokens
+   *  trailing the real diagnostic. */
+  private val UnclosedComment = "unclosed comment"
+
+  private def atLineComment(r: Reader[Char])  = lineComment.nonEmpty && matches(r, lineComment)
+  private def atBlockComment(r: Reader[Char]) = blockCommentStart.nonEmpty && matches(r, blockCommentStart)
+
+  /** Scan a block comment. `r` must be positioned at `blockCommentStart`; the
+   *  result is the reader just past the matching `blockCommentEnd`, or `None` if
+   *  the comment is never closed.
+   *
+   *  Block comments nest, as they do in Scala, Rust, Swift and D — that is what
+   *  makes it possible to comment out a region that already contains a comment.
+   *  Nothing inside a block comment is otherwise interpreted: a line comment does
+   *  not terminate it, and a quote does not begin a string literal.
+   *
+   *  This is the single implementation behind both comment paths — the
+   *  start-of-line scan in `skipBlankLines` and the mid-line scan in `whitespace`
+   *  — so the two cannot drift apart. */
+  private def scanBlockComment(r: Reader[Char]): Option[Reader[Char]] = {
+    @tailrec
+    def loop(in: Reader[Char], depth: Int): Option[Reader[Char]] =
+      if (depth == 0) Some(in)
+      else if (in.atEnd) None
+      else if (atBlockComment(in)) loop(in.drop(blockCommentStart.length), depth + 1)
+      else if (matches(in, blockCommentEnd)) loop(in.drop(blockCommentEnd.length), depth - 1)
+      else loop(in.rest, depth)
+
+    loop(r.drop(blockCommentStart.length), 1)
+  }
+
+  @tailrec
   private def skipBlankLines(r: Reader[Char]): Reader[Char] =
     if (r.atEnd)
       r
@@ -132,20 +175,22 @@ class IndentationLexical(
         r1
       else if (r1.first == '\n')
         skipBlankLines(r1.rest)
-      else if (matches(r1, lineComment)) {
+      else if (atLineComment(r1)) {
         val r2 = skipToEOL(r1.drop(lineComment.length))
 
         if (r2.atEnd)
           r2
         else
           skipBlankLines(r2.rest)
-      } else if (matches(r1, blockCommentStart)) {
-        val r2 = skip(r1.drop(blockCommentStart.length), a => matches(a, blockCommentEnd))
-
-        if (r2.atEnd) sys.error("unclosed comment " + r1.pos)
-
-        skipBlankLines(r2.drop(blockCommentEnd.length))
-      } else
+      } else if (atBlockComment(r1))
+        scanBlockComment(r1) match {
+          case Some(r2) => skipBlankLines(r2)
+          // Stop at the opening delimiter rather than raising: `whitespace` is
+          // reached next and reports the unterminated comment as an error token
+          // positioned here, the way every other lexical failure is reported.
+          case None => r1
+        }
+      else
         r
     }
 
@@ -162,6 +207,37 @@ class IndentationLexical(
   }
 
   override def whitespaceChar = elem("space char", c => c == ' ' || c == '\t' || c == '\r')
+
+  private lazy val lineCommentParser: Parser[Any] = Parser { in =>
+    if (atLineComment(in)) Success((), skipToEOL(in.drop(lineComment.length)))
+    else Failure("not a line comment", in)
+  }
+
+  private lazy val blockCommentParser: Parser[Any] = Parser { in =>
+    if (atBlockComment(in))
+      scanBlockComment(in) match {
+        case Some(after) => Success((), after)
+        // `Error` (unlike `Failure`) propagates out of the enclosing `rep`, and
+        // carries `in` — the opening delimiter — as its position.
+        case None => Error(UnclosedComment, in)
+      }
+    else Failure("not a block comment", in)
+  }
+
+  /** Whitespace and comments between tokens.
+   *
+   *  `StdLexical`'s version hardcodes `/*`, `*/` and `//`, ignoring the configured
+   *  delimiters, and does not nest. This one delegates to the same helpers as the
+   *  start-of-line path, so a comment lexes identically wherever it appears.
+   *
+   *  Newlines are deliberately not whitespace here — they are what `whitespaceChar`
+   *  excludes and what the indentation machinery runs on. A line comment therefore
+   *  stops at the newline it precedes, while a block comment may span newlines and
+   *  join the lines it spans. */
+  private lazy val whitespaceParser: Parser[Any] =
+    rep[Any](whitespaceChar | lineCommentParser | blockCommentParser)
+
+  override def whitespace: Parser[Any] = whitespaceParser
 
   private val BLOCK_STATE   = 1
   private val INDENT_STATE  = 2
@@ -207,14 +283,22 @@ class IndentationLexical(
 
                       lastEmittedToken = tok
                       (tok, in1, in2)
-                    case ns: NoSuccess => (errorToken(ns.msg), ns.next, skip(ns.next))
+                    case ns: NoSuccess => failed(ns)
                   }
-                case ns: NoSuccess => (errorToken(ns.msg), ns.next, skip(ns.next))
+                case ns: NoSuccess => failed(ns)
               }
           }
-        case ns: NoSuccess => (errorToken(ns.msg), ns.next, skip(ns.next))
+        case ns: NoSuccess => failed(ns)
       }
     }
+
+    /** Turn a lexical failure into an error token positioned where the failure was
+     *  reported. An unterminated block comment is reported at its opening
+     *  delimiter, and everything after it is comment text — so it is consumed
+     *  whole, rather than resuming one character in and trailing the real
+     *  diagnostic with junk tokens. */
+    private def failed(ns: NoSuccess): (Token, Reader[Char], Reader[Char]) =
+      (errorToken(ns.msg), ns.next, if (ns.msg == UnclosedComment) skipToEnd(ns.next) else skip(ns.next))
 
     private def skip(in: Reader[Char]) = if (in.atEnd) in else in.rest
 

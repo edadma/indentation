@@ -12,7 +12,7 @@ A Scala library for indentation-sensitive lexical analysis using parser combinat
 ## Installation
 
 ```scala
-libraryDependencies += "io.github.edadma" %%% "indentation" % "0.0.3"
+libraryDependencies += "io.github.edadma" %%% "indentation" % "0.0.4"
 ```
 
 Cross-compiled for JVM, Scala.js, and Scala Native.
@@ -93,6 +93,39 @@ Indents and dedents are always balanced. The lexer handles:
 - Blank lines and comment-only lines (skipped)
 - Line joining inside brackets/parentheses
 - Proper dedent generation at end of input
+
+## Comments
+
+Comments use the configured `lineComment`, `blockCommentStart` and `blockCommentEnd` in every
+position — at the start of a line and in the middle of one alike.
+
+**Block comments nest.** That is the point of a block comment: commenting out a region that already
+contains one.
+
+```
+/* outer /* inner */ still commented out */
+```
+
+Nothing inside a block comment is otherwise interpreted — a line comment does not terminate it, and
+a quote does not begin a string literal:
+
+```
+/* ;; the */ below still closes this comment */
+```
+
+Conversely, a block-comment delimiter inside a string literal or a line comment opens and closes
+nothing:
+
+```
+path = "/* not a comment */"
+```
+
+A line comment runs to the end of its line; a block comment may span newlines, joining the lines it
+spans into one logical line.
+
+**An unterminated block comment produces an `ErrorToken` positioned at its opening delimiter**, so a
+downstream compiler can report it as a diagnostic with a caret, rather than raising an exception. The
+remainder of the input is consumed as comment text, so exactly one diagnostic is produced.
 
 ## Line Joining
 

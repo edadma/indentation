@@ -260,6 +260,182 @@ class IndentationLexicalTests extends AnyFreeSpec with Matchers {
     }
   }
 
+  // Comments are scanned by two separate code paths: one for a comment at the
+  // start of a line (`skipBlankLines`), one for a comment in the middle of a line
+  // (`whitespace`). Every case below is exercised in both positions, because a
+  // defect in either path is invisible from the other.
+  "block comments" - {
+    def err(msg: String) = lexical.ErrorToken(msg)
+
+    /** Token positions, which plain `scan` discards. */
+    def scanWithPos(s: String): List[(lexical.Token, Int, Int)] = {
+      var r   = lexical.read(new CharSequenceReader(s))
+      val buf = List.newBuilder[(lexical.Token, Int, Int)]
+
+      while (!r.atEnd) {
+        buf += ((r.first, r.pos.line, r.pos.column))
+        r = r.rest
+      }
+
+      buf.result()
+    }
+
+    "nesting" - {
+      "one level, at start of line" in {
+        lexical.scan("/* outer /* inner */ still outer */\n1") shouldBe List(num("1"), nl)
+      }
+
+      "one level, mid-line" in {
+        lexical.scan("1 /* outer /* inner */ still outer */ 2") shouldBe List(num("1"), num("2"), nl)
+      }
+
+      "several levels, at start of line" in {
+        lexical.scan("/* a /* b /* c */ d */ e */\n1") shouldBe List(num("1"), nl)
+      }
+
+      "several levels, mid-line" in {
+        lexical.scan("1 /* a /* b /* c */ d */ e */ 2") shouldBe List(num("1"), num("2"), nl)
+      }
+
+      "a nested comment spanning lines, at start of line" in {
+        lexical.scan("/* a\n   /* b\n   */\n*/\n1") shouldBe List(num("1"), nl)
+      }
+
+      "a nested comment spanning lines, mid-line" in {
+        lexical.scan("1 /* a\n   /* b\n   */\n*/ 2") shouldBe List(num("1"), num("2"), nl)
+      }
+
+      "an inner comment does not close the outer one early, at start of line" in {
+        // Without nesting this leaves `still outer */` to be lexed as code.
+        lexical.scan("/* outer /* inner */ still outer */") shouldBe List(nl)
+      }
+
+      "an inner comment does not close the outer one early, mid-line" in {
+        lexical.scan("1 /* outer /* inner */ still outer */") shouldBe List(num("1"), nl)
+      }
+    }
+
+    "interaction with line comments" - {
+      "a line comment does not terminate a block comment, at start of line" in {
+        // A naive "line comment wins" scan swallows the `*/` and runs to EOF.
+        lexical.scan("/* ;; */\n1") shouldBe List(num("1"), nl)
+      }
+
+      "a line comment does not terminate a block comment, mid-line" in {
+        lexical.scan("1 /* ;; */ 2") shouldBe List(num("1"), num("2"), nl)
+      }
+
+      "a line comment inside a block comment spans no lines, at start of line" in {
+        lexical.scan("/* ;; not the end\n   still comment */\n1") shouldBe List(num("1"), nl)
+      }
+
+      "a line comment inside a block comment spans no lines, mid-line" in {
+        lexical.scan("1 /* ;; not the end\n   still comment */ 2") shouldBe List(num("1"), num("2"), nl)
+      }
+
+      "a block comment start inside a line comment opens nothing, at start of line" in {
+        lexical.scan(";; /* not a comment\n1") shouldBe List(num("1"), nl)
+      }
+
+      "a block comment start inside a line comment opens nothing, mid-line" in {
+        lexical.scan("1 ;; /* not a comment\n2") shouldBe List(num("1"), nl, num("2"), nl)
+      }
+
+      "the configured line comment is honoured mid-line, not a hardcoded //" in {
+        // `//` is two `/` delimiters for this lexer; only `;;` starts a comment.
+        lexical.scan("1 // 2") shouldBe List(num("1"), kw("/"), kw("/"), num("2"), nl)
+        lexical.scan("1 ;; 2") shouldBe List(num("1"), nl)
+      }
+    }
+
+    "delimiters inside string literals" - {
+      "an opening delimiter in a string opens nothing, at start of line" in {
+        lexical.scan("\"/*\"") shouldBe List(str("/*"), nl)
+      }
+
+      "an opening delimiter in a string opens nothing, mid-line" in {
+        lexical.scan("1 \"/*\" 2") shouldBe List(num("1"), str("/*"), num("2"), nl)
+      }
+
+      "a closing delimiter in a string closes nothing, at start of line" in {
+        lexical.scan("\"*/\"") shouldBe List(str("*/"), nl)
+      }
+
+      "a closing delimiter in a string closes nothing, mid-line" in {
+        lexical.scan("1 \"*/\" 2") shouldBe List(num("1"), str("*/"), num("2"), nl)
+      }
+
+      "a whole comment inside a string is just text, at start of line" in {
+        lexical.scan("\"/* not a comment */\"") shouldBe List(str("/* not a comment */"), nl)
+      }
+
+      "a whole comment inside a string is just text, mid-line" in {
+        lexical.scan("x = \"/* not a comment */\"") shouldBe List(id("x"), kw("="), str("/* not a comment */"), nl)
+      }
+    }
+
+    "unterminated comments" - {
+      "unterminated, at start of line" in {
+        lexical.scan("/* nope") shouldBe List(err("unclosed comment"), nl)
+      }
+
+      "unterminated, mid-line" in {
+        lexical.scan("1 /* nope") shouldBe List(num("1"), err("unclosed comment"), nl)
+      }
+
+      "unterminated nested, at start of line" in {
+        // The inner `*/` closes only the inner comment; the outer is still open.
+        // Without nesting this input is a complete comment and reports nothing.
+        lexical.scan("/* outer /* inner */") shouldBe List(err("unclosed comment"), nl)
+      }
+
+      "unterminated nested, mid-line" in {
+        lexical.scan("1 /* outer /* inner */") shouldBe List(num("1"), err("unclosed comment"), nl)
+      }
+
+      "reported at the opening delimiter, at start of line" in {
+        scanWithPos("/* outer /* inner */") shouldBe List((err("unclosed comment"), 1, 1), (nl, 1, 21))
+      }
+
+      "reported at the opening delimiter, mid-line" in {
+        scanWithPos("1 /* nope").head shouldBe ((num("1"), 1, 1))
+        scanWithPos("1 /* nope")(1) shouldBe ((err("unclosed comment"), 1, 3))
+      }
+
+      "reported at the opening delimiter on a later line" in {
+        scanWithPos("1\n2\n  /* nope")(4) shouldBe ((err("unclosed comment"), 3, 3))
+      }
+
+      "does not raise" in {
+        noException should be thrownBy lexical.scan("/* nope")
+        noException should be thrownBy lexical.scan("1 /* nope")
+        noException should be thrownBy lexical.scan("/* outer /* inner */")
+      }
+    }
+
+    "well-formed comments are transparent" - {
+      "a comment-only input, at start of line" in {
+        lexical.scan("/* just a comment */") shouldBe List(nl)
+      }
+
+      "adjacent comments, at start of line" in {
+        lexical.scan("/* a */ /* b */\n1") shouldBe List(num("1"), nl)
+      }
+
+      "adjacent comments, mid-line" in {
+        lexical.scan("1 /* a */ /* b */ 2") shouldBe List(num("1"), num("2"), nl)
+      }
+
+      "a comment does not disturb indentation, at start of line" in {
+        lexical.scan("1\n  /* c */\n  2\n3") shouldBe List(num("1"), ind, num("2"), nl, ded, nl, num("3"), nl)
+      }
+
+      "a comment does not disturb indentation, mid-line" in {
+        lexical.scan("1 /* c */\n  2 /* c */\n3") shouldBe List(num("1"), ind, num("2"), nl, ded, nl, num("3"), nl)
+      }
+    }
+  }
+
   "reader interface" - {
     "should work with Reader[Char] input" in {
       val reader = lexical.read(new CharSequenceReader("1\n  2"))
