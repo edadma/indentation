@@ -12,7 +12,7 @@ A Scala library for indentation-sensitive lexical analysis using parser combinat
 ## Installation
 
 ```scala
-libraryDependencies += "io.github.edadma" %%% "indentation" % "0.0.4"
+libraryDependencies += "io.github.edadma" %%% "indentation" % "0.0.5"
 ```
 
 Cross-compiled for JVM, Scala.js, and Scala Native.
@@ -89,7 +89,8 @@ The lexer generates three special tokens in addition to the standard `StdLexical
 
 Indents and dedents are always balanced. The lexer handles:
 
-- Tab or space indentation (but not mixed on the same line)
+- Tab or space indentation — different lines may use different characters, but mixing them within
+  one line's indentation produces an `ErrorToken` positioned at the start of that line
 - Blank lines and comment-only lines (skipped)
 - Line joining inside brackets/parentheses
 - Proper dedent generation at end of input
@@ -122,6 +123,17 @@ path = "/* not a comment */"
 
 A line comment runs to the end of its line; a block comment may span newlines, joining the lines it
 spans into one logical line.
+
+A comment is invisible to the off-side rule. A line whose code is preceded by a block comment is
+indented by its own leading whitespace, not by wherever the comment happens to end:
+
+```
+if x
+  /* note */ y
+  z
+```
+
+`y` and `z` are both at indentation 2, so they are one block.
 
 **An unterminated block comment produces an `ErrorToken` positioned at its opening delimiter**, so a
 downstream compiler can report it as a diagnostic with a caret, rather than raising an exception. The

@@ -27,6 +27,22 @@ class IndentationLexicalTests extends AnyFreeSpec with Matchers {
   def id(s: String)  = lexical.Identifier(s)
   def kw(s: String)  = lexical.Keyword(s)
   def str(s: String) = lexical.StringLit(s)
+  def err(s: String) = lexical.ErrorToken(s)
+
+  /** Token positions, which plain `scan` discards. */
+  def scanWithPos(s: String): List[(lexical.Token, Int, Int)] = {
+    var r   = lexical.read(new CharSequenceReader(s))
+    val buf = List.newBuilder[(lexical.Token, Int, Int)]
+
+    while (!r.atEnd) {
+      buf += ((r.first, r.pos.line, r.pos.column))
+      r = r.rest
+    }
+
+    buf.result()
+  }
+
+  val mixedIndent = "only tabs or spaces (but not both on a given line) may be used for indentation"
 
   "basic newline handling" - {
     "single number" in {
@@ -253,6 +269,37 @@ class IndentationLexicalTests extends AnyFreeSpec with Matchers {
     }
   }
 
+  // The lexer refuses indentation that mixes tabs and spaces on one line. That
+  // refusal reaches the caller as an error token: an `Error` from the indentation
+  // parser is a malformed *indentation*, not the ordinary "no indentation token
+  // here" that lets the scanner fall through and lex a real token.
+  "mixed tab and space indentation" - {
+    "is reported, tab then space" in {
+      lexical.scan("1\n\t 2").collect { case lexical.ErrorToken(m) => m } shouldBe List(mixedIndent)
+    }
+
+    "is reported, space then tab" in {
+      lexical.scan("1\n \t2").collect { case lexical.ErrorToken(m) => m } shouldBe List(mixedIndent)
+    }
+
+    "is reported at the start of the offending line" in {
+      scanWithPos("1\n\t 2")(1) shouldBe ((err(mixedIndent), 2, 1))
+    }
+
+    "consistent indentation is not reported" in {
+      lexical.scan("1\n\t\t2").collect { case lexical.ErrorToken(m) => m } shouldBe Nil
+      lexical.scan("1\n  2").collect { case lexical.ErrorToken(m) => m } shouldBe Nil
+      // Different lines may use different characters; only mixing within one line
+      // is refused.
+      lexical.scan("1\n\t2\n3\n  4").collect { case lexical.ErrorToken(m) => m } shouldBe Nil
+    }
+
+    "does not raise" in {
+      noException should be thrownBy lexical.scan("1\n\t 2")
+      noException should be thrownBy lexical.scan("1\n \t/* c */ 2")
+    }
+  }
+
   "error handling" - {
     "should handle unknown tokens gracefully" in {
       // The lexical analyzer may produce error tokens for unknown characters
@@ -265,21 +312,6 @@ class IndentationLexicalTests extends AnyFreeSpec with Matchers {
   // (`whitespace`). Every case below is exercised in both positions, because a
   // defect in either path is invisible from the other.
   "block comments" - {
-    def err(msg: String) = lexical.ErrorToken(msg)
-
-    /** Token positions, which plain `scan` discards. */
-    def scanWithPos(s: String): List[(lexical.Token, Int, Int)] = {
-      var r   = lexical.read(new CharSequenceReader(s))
-      val buf = List.newBuilder[(lexical.Token, Int, Int)]
-
-      while (!r.atEnd) {
-        buf += ((r.first, r.pos.line, r.pos.column))
-        r = r.rest
-      }
-
-      buf.result()
-    }
-
     "nesting" - {
       "one level, at start of line" in {
         lexical.scan("/* outer /* inner */ still outer */\n1") shouldBe List(num("1"), nl)
@@ -433,6 +465,106 @@ class IndentationLexicalTests extends AnyFreeSpec with Matchers {
       "a comment does not disturb indentation, mid-line" in {
         lexical.scan("1 /* c */\n  2 /* c */\n3") shouldBe List(num("1"), ind, num("2"), nl, ded, nl, num("3"), nl)
       }
+    }
+
+    // A line whose code is preceded by a block comment still has an indentation:
+    // its own leading whitespace. Measuring from where the comment happens to end
+    // makes the width of the gap after `*/` into indentation, which is nonsense —
+    // and, being a level like any other, it goes on to corrupt every comparison
+    // against the lines that follow.
+    "a comment before the code on a line" - {
+      "the line's own leading whitespace is the indentation" in {
+        lexical.scan("1\n  /* c */2") shouldBe List(num("1"), ind, num("2"), nl, ded, nl)
+      }
+
+      "the gap after the comment is not indentation" in {
+        lexical.scan("1\n  /* c */ 2\n  3") shouldBe
+          List(num("1"), ind, num("2"), nl, num("3"), nl, ded, nl)
+      }
+
+      "a following line at the same indentation opens no block" in {
+        lexical.scan("1\n  2\n  /* c */ 3") shouldBe
+          List(num("1"), ind, num("2"), nl, num("3"), nl, ded, nl)
+      }
+
+      "a following line at a lower indentation closes the block" in {
+        lexical.scan("1\n    /* c */ 2\n3") shouldBe List(num("1"), ind, num("2"), nl, ded, nl, num("3"), nl)
+      }
+
+      "a comment spanning lines is measured where it starts" in {
+        lexical.scan("1\n  /* a\nb */ 2\n  3") shouldBe
+          List(num("1"), ind, num("2"), nl, num("3"), nl, ded, nl)
+      }
+
+      "adjacent comments before the code" in {
+        lexical.scan("1\n  /* a */ /* b */ 2\n  3") shouldBe
+          List(num("1"), ind, num("2"), nl, num("3"), nl, ded, nl)
+      }
+
+      "tabs before the comment are counted as tabs" in {
+        lexical.scan("1\n\t/* c */ 2\n\t3") shouldBe
+          List(num("1"), ind, num("2"), nl, num("3"), nl, ded, nl)
+      }
+
+      "mixing tabs and spaces before a comment is still an error" in {
+        lexical.scan("1\n \t/* c */ 2").collect { case lexical.ErrorToken(m) => m } shouldBe
+          List("only tabs or spaces (but not both on a given line) may be used for indentation")
+      }
+
+      "a comment-only line still carries no indentation of its own" in {
+        // Nothing to indent: the line is skipped whole and level 2 comes from `3`.
+        lexical.scan("1\n      /* c */\n  3") shouldBe List(num("1"), ind, num("3"), nl, ded, nl)
+      }
+    }
+  }
+
+  // A language that has no line comments, or no block comments, leaves the
+  // delimiter unset. An empty delimiter matches everywhere, so it has to be inert
+  // rather than matching at every position.
+  "unset comment delimiters" - {
+    def lexerWith(line: String, start: String, end: String) =
+      new IndentationLexical(
+        newlineBeforeIndent = false,
+        newlineAfterDedent = true,
+        startLineJoining = Nil,
+        endLineJoining = Nil,
+        lineComment = line,
+        blockCommentStart = start,
+        blockCommentEnd = end,
+      ) {
+        delimiters ++= List("+")
+      }
+
+    "an empty lineComment starts no comment" in {
+      val l = lexerWith("", "/*", "*/")
+
+      l.scan("1\n2") shouldBe List(l.NumericLit("1"), l.Newline, l.NumericLit("2"), l.Newline)
+      l.scan("1 /* c */ + 2") shouldBe List(l.NumericLit("1"), l.Keyword("+"), l.NumericLit("2"), l.Newline)
+    }
+
+    "an empty blockCommentStart opens no comment" in {
+      val l = lexerWith(";;", "", "")
+
+      l.scan("1\n2") shouldBe List(l.NumericLit("1"), l.Newline, l.NumericLit("2"), l.Newline)
+      l.scan("1 + 2\n;; c\n3") shouldBe
+        List(l.NumericLit("1"), l.Keyword("+"), l.NumericLit("2"), l.Newline, l.NumericLit("3"), l.Newline)
+    }
+
+    "both unset" in {
+      val l = lexerWith("", "", "")
+
+      l.scan("1 + 2") shouldBe List(l.NumericLit("1"), l.Keyword("+"), l.NumericLit("2"), l.Newline)
+      l.scan("1\n  2\n3") shouldBe
+        List(
+          l.NumericLit("1"),
+          l.Indent,
+          l.NumericLit("2"),
+          l.Newline,
+          l.Dedent,
+          l.Newline,
+          l.NumericLit("3"),
+          l.Newline,
+        )
     }
   }
 

@@ -164,35 +164,51 @@ class IndentationLexical(
     loop(r.drop(blockCommentStart.length), 1)
   }
 
+  /** Skip a line's leading whitespace and any comments that follow it, stopping at
+   *  the first thing that is none of those. What it stops on says what the line is:
+   *  a newline or end of input means the line carries no code; the opening
+   *  delimiter of a block comment means that comment is never closed (a closed one
+   *  would have been consumed); anything else is code. */
   @tailrec
-  private def skipBlankLines(r: Reader[Char]): Reader[Char] =
-    if (r.atEnd)
+  private def skipLinePrefix(r: Reader[Char]): Reader[Char] = {
+    val r1 = skipSpace(r)
+
+    if (r1.atEnd || r1.first == '\n') r1
+    else if (atLineComment(r1)) skipToEOL(r1.drop(lineComment.length))
+    else if (atBlockComment(r1))
+      scanBlockComment(r1) match {
+        case Some(r2) => skipLinePrefix(r2)
+        case None     => r1
+      }
+    else r1
+  }
+
+  /** Advance past every line that carries no code, leaving the reader at the start
+   *  of one that does — *before* its leading whitespace, so that the caller
+   *  measures the indentation from the line's own margin.
+   *
+   *  Returning a position part-way into the line would make the gap after a
+   *  comment that precedes the code into the line's indentation, which is both
+   *  wrong on its own and, being a level like any other, wrong for every
+   *  comparison against the lines that follow. The comment itself does not need to
+   *  be skipped here — `whitespace` consumes it before the next token. */
+  @tailrec
+  private def skipBlankLines(r: Reader[Char]): Reader[Char] = {
+    val end = skipLinePrefix(r)
+
+    if (end.atEnd)
+      end
+    else if (end.first == '\n')
+      skipBlankLines(end.rest)
+    // An unclosed block comment runs to end of input, so this line has no code
+    // either. Stop at the opening delimiter: no indentation is measured for a line
+    // that has nothing to indent, and `whitespace` reports the comment from there,
+    // the way every other lexical failure is reported.
+    else if (atBlockComment(end))
+      end
+    else
       r
-    else {
-      val r1 = skipSpace(r)
-
-      if (r1.atEnd)
-        r1
-      else if (r1.first == '\n')
-        skipBlankLines(r1.rest)
-      else if (atLineComment(r1)) {
-        val r2 = skipToEOL(r1.drop(lineComment.length))
-
-        if (r2.atEnd)
-          r2
-        else
-          skipBlankLines(r2.rest)
-      } else if (atBlockComment(r1))
-        scanBlockComment(r1) match {
-          case Some(r2) => skipBlankLines(r2)
-          // Stop at the opening delimiter rather than raising: `whitespace` is
-          // reached next and reports the unterminated comment as an error token
-          // positioned here, the way every other lexical failure is reported.
-          case None => r1
-        }
-      else
-        r
-    }
+  }
 
   def read(in: Reader[Char]): Reader[Token] = {
     level.clear()
@@ -271,7 +287,12 @@ class IndentationLexical(
           IndentationParser(in0) match {
             case Success(tok, in2) =>
               (tok, in, in2)
-            case Failure(_, _) | Error(_, _) =>
+            // `Failure` means "no indentation token here", which is ordinary — fall
+            // through and lex a real token. `Error` means the indentation itself is
+            // malformed, and must be reported: matching it alongside `Failure` here
+            // is what made the diagnostic below unreachable.
+            case e: Error => failed(e)
+            case Failure(_, _) =>
               skipWhiteSpace(in) match {
                 case Success(_, in1) =>
                   token(in1) match {
