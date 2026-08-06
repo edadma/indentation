@@ -68,6 +68,11 @@ class IndentationLexical(
   // there is no real Newline character at the outer indent (the next character is
   // the close-delim, e.g. `)`).
   private var drainDedent: Boolean = false
+  // Line starts of the character sequence being scanned, so that a token's line and
+  // column cost a binary search instead of a walk. Null when the reader `read` was
+  // given is not backed by one, which is the only case that falls back to asking the
+  // character reader's own position.
+  private var lineIndex: LineIndex = null
 
   case object Newline extends Token { val chars = "newline" }
   case object Indent  extends Token { val chars = "indent"  }
@@ -126,6 +131,18 @@ class IndentationLexical(
       skip(r.rest, pred)
 
   private def skipSpace(r: Reader[Char]) = skip(r, a => a.atEnd || a.first != '\t' && a.first != ' ' && a.first != '\r')
+
+  /** Whether two readers have reached the same place.
+   *
+   *  By offset, which is the cheap question and the one being asked. Comparing the
+   *  *positions* asks the same thing through `Position.equals`, which is defined as
+   *  equal lines and equal columns — and computing a line from an offset means
+   *  indexing the source, which `LineIndex` describes the cost of. Two readers over
+   *  one source are at the same line and column exactly when they are at the same
+   *  offset, so nothing is given up. */
+  private def samePlace(a: Reader[Char], b: Reader[Char]): Boolean =
+    try a.offset == b.offset
+    catch { case _: NoSuchMethodError => a.pos == b.pos }
 
   private def skipToEOL(r: Reader[Char]) = skip(r, a => a.atEnd || a.first == '\n')
 
@@ -219,6 +236,9 @@ class IndentationLexical(
     lineJoining = 0
     joiningFrames.clear()
     lastEmittedToken = null
+    lineIndex =
+      try new LineIndex(in.source)
+      catch { case _: NoSuchMethodError => null }
     new IndentationScanner(skipBlankLines(in))
   }
 
@@ -373,13 +393,108 @@ class IndentationLexical(
       else
         new IndentationScanner(rest2)
 
-    lazy val pos = new PositionWrapper(rest1.pos)
+    lazy val pos: PositionWrapper = positionOf(rest1)
   }
 
-  class PositionWrapper(p: Position) extends Position {
-    val column                      = p.column
-    val line                        = p.line
-    protected lazy val lineContents = p.longString.split("\n")(0)
+  /** Where `r` sits, as a position that already knows its line and column.
+   *
+   *  The index answers in a binary search; asking the character reader for its own
+   *  position does not, for the reason `LineIndex` describes. The fallback is for a
+   *  reader that is not backed by a character sequence at all, where there is no
+   *  index to have built and the library's own position is the only answer. */
+  private def positionOf(r: Reader[Char]): PositionWrapper = {
+    val idx = lineIndex
+
+    if (idx != null && (r.source eq idx.source)) {
+      val line = idx.lineOf(r.offset)
+
+      new PositionWrapper(line, idx.columnOf(r.offset, line), () => idx.contentsOf(line))
+    } else new PositionWrapper(r.pos)
+  }
+
+  /** The start offset of every line of a character sequence, so that an offset can be
+   *  turned into a line and a column without walking the sequence.
+   *
+   *  `OffsetPosition` builds exactly this index and caches it against the source — but
+   *  only on the JVM. The Scala.js and Scala Native builds of
+   *  `scala-parser-combinators` substitute a map that discards what it is given ("the
+   *  /dev/null of Maps", in its own words), so on those platforms the index is rebuilt
+   *  by every position that is asked for its line or column. A scanner asks once per
+   *  token, which makes lexing a file quadratic in the length of the file: a compiler
+   *  front end spent four and a half seconds on a two-line program, nearly all of it
+   *  re-indexing the same standard library. Indexing the source once, here, is what
+   *  keeps it linear on every platform alike.
+   *
+   *  The line ends are the ones `OffsetPosition` recognizes, and the search is its
+   *  search, so a position from the index and one from the library agree. */
+  private class LineIndex(val source: CharSequence) {
+
+    /** Every line start, preceded by 0 and followed by the length — so that the line
+     *  holding an offset always has both a start and an end to read. */
+    private val starts: Array[Int] = {
+      val buf = new ListBuffer[Int]
+      var i   = 0
+
+      buf += 0
+
+      while (i < source.length) {
+        val c = source.charAt(i)
+
+        if (c == '\n' || (c == '\r' && (i == source.length - 1 || source.charAt(i + 1) != '\n')))
+          buf += i + 1
+
+        i += 1
+      }
+
+      buf += source.length
+      buf.toArray
+    }
+
+    /** The 1-based line holding `offset`. */
+    def lineOf(offset: Int): Int = {
+      var lo = 0
+      var hi = starts.length - 1
+
+      while (lo + 1 < hi) {
+        val mid = lo + ((hi - lo) / 2)
+
+        if (offset < starts(mid)) hi = mid
+        else lo = mid
+      }
+
+      lo + 1
+    }
+
+    /** The 1-based column of `offset`, given the line `lineOf` put it on. */
+    def columnOf(offset: Int, line: Int): Int = offset - starts(line - 1) + 1
+
+    /** The text of `line`, without whatever ended it. */
+    def contentsOf(line: Int): String = {
+      val from = starts(line - 1)
+      var end  = starts(line)
+
+      while (end > from && { val c = source.charAt(end - 1); c == '\n' || c == '\r' })
+        end -= 1
+
+      source.subSequence(from, end).toString
+    }
+  }
+
+  /** A token's position.
+   *
+   *  It wrapped the position the character reader supplied, reading its line and column
+   *  eagerly — which is where the name comes from, and which is what `LineIndex` exists
+   *  to make cheap. Both spellings are kept because a reader that is not backed by a
+   *  character sequence has no index to be read from. */
+  class PositionWrapper private[indentation] (
+      val line: Int,
+      val column: Int,
+      contents: () => String,
+  ) extends Position {
+
+    def this(p: Position) = this(p.line, p.column, () => p.longString.split("\n")(0))
+
+    protected lazy val lineContents: String = contents()
   }
 
   private object IndentationParser extends Parser[Token] {
@@ -442,7 +557,7 @@ class IndentationLexical(
               } else {
                 val (c, r) = indents(in1.first, 0, in1)
 
-                if (skipSpace(in1).pos != r.pos)
+                if (!samePlace(skipSpace(in1), r))
                   Error("only tabs or spaces (but not both on a given line) may be used for indentation", in1)
                 else {
                   if (c > level.top) {
