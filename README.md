@@ -12,7 +12,7 @@ A Scala library for indentation-sensitive lexical analysis using parser combinat
 ## Installation
 
 ```scala
-libraryDependencies += "io.github.edadma" %%% "indentation" % "0.0.6"
+libraryDependencies += "io.github.edadma" %%% "indentation" % "0.0.7"
 ```
 
 Cross-compiled for JVM, Scala.js, and Scala Native.
@@ -219,6 +219,44 @@ The default implementation returns `false`, so only bracket line joining applies
 unambiguously means "right-hand side follows." Do **not** include tokens that can legitimately
 end a statement (such as postfix `++` / `--`), or tokens that drive their own indented-block
 construct (such as `=`, `->`, `=>`) — those would swallow the block's `Newline`.
+
+## Leading-Token Continuation
+
+The mirror image, and the one a fluent API actually needs: a chain is habitually broken **before**
+the dot rather than after it, so there is no trailing token to see and the decision has to be made
+by looking ahead. Override `isLineContinuationStart`:
+
+```scala
+import scala.util.parsing.input.Reader
+
+new IndentationLexical(/* ... */) {
+  override protected def isLineContinuationStart(r: Reader[Char]): Boolean =
+    !r.atEnd && r.first == '.' && !r.rest.atEnd && r.rest.first.isLetter
+}
+```
+
+The reader is positioned at the first character of *code* on the next line — leading whitespace,
+blank lines and comments have already been stepped over — so an implementation reads the line's
+opening characters and nothing else. Returning `true` suppresses the `Newline` and any `Indent` or
+`Dedent` the line's margin would have produced:
+
+```
+val view = text(label)
+    .padding(8)
+    .background(blue)
+```
+
+As with a trailing operator, a continuation line's own indentation carries no meaning, so it may be
+laid out however reads best.
+
+**Be sure the text you accept can never begin a statement.** The line is joined to the one above and
+its margin is discarded, so a leading token that could also *open* a statement would pull a line
+written at the outer margin into the block above it, and that block would then end one line later
+than it looks like it does. A `.` followed by a name is the safe case — `..`, `...` and `.0` are all
+excluded by requiring the letter, and no expression grammar begins a statement with a dot. A bare
+`-` is **not** safe, since a statement may begin with a negation.
+
+The default implementation returns `false`, so a lexer that does not override it is unaffected.
 
 ## Building
 

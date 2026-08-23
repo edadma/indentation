@@ -93,6 +93,40 @@ class IndentationLexical(
    *  `=>`). */
   protected def isLineContinuationToken(tok: Token): Boolean = false
 
+  /** Override to mark a *line* as a continuation of the one before it, decided by
+   *  looking at the text it begins with rather than at the token it follows.
+   *
+   *  This is the mirror image of `isLineContinuationToken` and exists because the
+   *  two continuation styles need opposite mechanisms. A trailing operator says
+   *  "more is coming" and is known when the newline is reached; a leading one —
+   *  the `.` of a call chain, as Scala, Kotlin and Swift all write it — says
+   *  "this belongs to what came before" and is knowable only by looking ahead:
+   *
+   *  {{{
+   *  val v = text(label)
+   *      .padding(8)
+   *      .background(blue)
+   *  }}}
+   *
+   *  The reader passed in is positioned at the first character of code on the next
+   *  line: leading whitespace, blank lines and comments have already been stepped
+   *  over, so an implementation reads the line's opening characters and nothing
+   *  else. Returning true suppresses the Newline and any Indent or Dedent that the
+   *  line's margin would otherwise have produced — so, exactly as with a trailing
+   *  operator, a continuation line's indentation carries no meaning and it may be
+   *  laid out however reads best.
+   *
+   *  The default returns false, so a lexer that does not override this behaves as
+   *  it always did.
+   *
+   *  An implementation must be sure the text it accepts can never begin a
+   *  statement of its own, because a line this claims is joined to the one above
+   *  and its own indentation is discarded — a leading token that could also open a
+   *  statement would silently swallow the dedent that ended a block. A `.`
+   *  followed by a name is the safe case and is why the rule is worth having; a
+   *  bare `-` is not, since a statement may begin with a negation. */
+  protected def isLineContinuationStart(r: Reader[Char]): Boolean = false
+
   def num(s: String) = NumericLit(s)
 
   def scan(s: String): List[Token] = {
@@ -543,7 +577,14 @@ class IndentationLexical(
             // implicit newline so the RHS can live on the next indented line.
             val trailingContinuation =
               lineJoining == 0 && lastEmittedToken != null && isLineContinuationToken(lastEmittedToken)
-            if ((lineJoining > 0 && !triggered) || trailingContinuation)
+            // Leading-token continuation: the next line begins with something that
+            // can only belong to this one (per `isLineContinuationStart`), so the
+            // newline is suppressed just as a trailing operator would have. Decided
+            // before the block-trigger frame is pushed, so that a continued line is
+            // never mistaken for the opening of a triggered body.
+            val leadingContinuation =
+              !in.rest.atEnd && isLineContinuationStart(skipLinePrefix(skipBlankLines(in.rest)))
+            if ((lineJoining > 0 && !triggered) || trailingContinuation || leadingContinuation)
               Failure(null, in)
             else {
               if (triggered) {
