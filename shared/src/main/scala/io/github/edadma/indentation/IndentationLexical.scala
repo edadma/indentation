@@ -127,6 +127,20 @@ class IndentationLexical(
    *  bare `-` is not, since a statement may begin with a negation. */
   protected def isLineContinuationStart(r: Reader[Char]): Boolean = false
 
+  /** The last token emitted before the newline currently being decided, or `null` at the start of
+   *  input.
+   *
+   *  Exposed for `isLineContinuationStart`, because lookahead alone is not always enough. A leading
+   *  `.` continues a call chain — but only where the line above could have *finished* an
+   *  expression. After a keyword that opens an indented block there is nothing for a chain to hang
+   *  on, and in a language whose block bodies can themselves begin with a dot (a `match` arm
+   *  matching an enum variant, say) the two readings would collide there and nowhere else.
+   *
+   *  This is the exact dual of `isLineContinuationToken`, so an implementation consulting both ends
+   *  is stating one rule rather than two: a line joins when what follows demands it *and* what
+   *  precedes admits it. */
+  protected def previousToken: Token = lastEmittedToken
+
   def num(s: String) = NumericLit(s)
 
   def scan(s: String): List[Token] = {

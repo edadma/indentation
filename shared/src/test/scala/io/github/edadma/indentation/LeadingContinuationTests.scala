@@ -123,6 +123,59 @@ class LeadingContinuationTests extends AnyFreeSpec with Matchers {
     }
   }
 
+  "the previous token, for a predicate that needs both ends" - {
+    // The case this exists for: a language where a block body can itself begin with a dot. Joining
+    // after a keyword that opens one would read the body's first line as a continuation of the
+    // header, so a predicate consulting `previousToken` declines exactly there and nowhere else.
+    "a predicate may decline after a token that cannot end an expression" in {
+      val fussy = new IndentationLexical(
+        newlineBeforeIndent = true,
+        newlineAfterDedent = true,
+        startLineJoining = List("("),
+        endLineJoining = List(")"),
+        lineComment = "//",
+        blockCommentStart = "/*",
+        blockCommentEnd = "*/",
+      ) {
+        delimiters ++= List(".", "+", "(", ")", "=")
+        // A word is made a keyword by `reserved`, not by `delimiters` — `delimiters` is for symbols.
+        reserved += "match"
+
+        override protected def isLineContinuationStart(r: Reader[Char]): Boolean =
+          !r.atEnd && r.first == '.' && !r.rest.atEnd && r.rest.first.isLetter &&
+            previousToken != Keyword("match")
+      }
+
+      // After an ordinary name the chain joins, as it always did.
+      scan(fussy, "a\n    .b") shouldBe List("a", ".", "b", "newline")
+
+      // After the keyword it does not, so the block below it is a block.
+      scan(fussy, "a match\n    .b") shouldBe
+        List("a", "match", "newline", "indent", ".", "b", "newline", "dedent", "newline")
+    }
+
+    "and it is null before anything has been emitted" in {
+      val first = new IndentationLexical(
+        newlineBeforeIndent = true,
+        newlineAfterDedent = true,
+        startLineJoining = List("("),
+        endLineJoining = List(")"),
+        lineComment = "//",
+        blockCommentStart = "/*",
+        blockCommentEnd = "*/",
+      ) {
+        delimiters ++= List(".", "(", ")")
+
+        // Reading the token without guarding against null is the mistake this asserts is possible
+        // to make and cheap to avoid.
+        override protected def isLineContinuationStart(r: Reader[Char]): Boolean =
+          previousToken != null && !r.atEnd && r.first == '.'
+      }
+
+      scan(first, ".a\n.b") shouldBe List(".", "a", ".", "b", "newline")
+    }
+  }
+
   "the hazard it shares with every joining rule" - {
     // A continuation line's indentation is discarded, which is the whole point of continuing. So a
     // predicate that accepted a leading token which could also *begin* a statement would pull a line

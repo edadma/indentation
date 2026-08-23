@@ -12,7 +12,7 @@ A Scala library for indentation-sensitive lexical analysis using parser combinat
 ## Installation
 
 ```scala
-libraryDependencies += "io.github.edadma" %%% "indentation" % "0.0.7"
+libraryDependencies += "io.github.edadma" %%% "indentation" % "0.0.8"
 ```
 
 Cross-compiled for JVM, Scala.js, and Scala Native.
@@ -257,6 +257,33 @@ excluded by requiring the letter, and no expression grammar begins a statement w
 `-` is **not** safe, since a statement may begin with a negation.
 
 The default implementation returns `false`, so a lexer that does not override it is unaffected.
+
+### Both ends of the join
+
+Lookahead alone is not always enough. `previousToken` is the last token emitted before the newline
+being decided (`null` at the start of input), so a predicate can require that the line above could
+have *finished* an expression before joining the line below to it:
+
+```scala
+override protected def isLineContinuationStart(r: Reader[Char]): Boolean =
+  !r.atEnd && r.first == '.' && !r.rest.atEnd && r.rest.first.isLetter &&
+    previousToken != Keyword("match")
+```
+
+This matters in a language where a block body can itself begin with a dot. Without the guard,
+
+```
+value match
+    .Red -> 1
+```
+
+reads the arm as a continuation of the header, because a leading dot is a leading dot whichever
+construct it is under. Declining after the keyword that opens the block is the narrowest fix, and it
+costs nothing: no call chain continues from `match`.
+
+`previousToken` is the exact dual of `isLineContinuationToken`, so a predicate consulting both ends
+is stating one rule rather than two — a line joins when what follows demands it *and* what precedes
+admits it.
 
 ## Building
 
