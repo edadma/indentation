@@ -139,6 +139,62 @@ if x
 downstream compiler can report it as a diagnostic with a caret, rather than raising an exception. The
 remainder of the input is consumed as comment text, so exactly one diagnostic is produced.
 
+### Keeping the comments — `comment`
+
+A comment is trivia and is dropped. Override `comment` to be told about each one as it is consumed,
+in both positions, without changing anything else:
+
+```scala
+override protected def comment(from: Reader[Char], to: Reader[Char]): Unit =
+  seen(from.offset) = from.source.subSequence(from.offset, to.offset).toString
+```
+
+It exists for the language that wants its comments for something *beside* parsing — a documentation
+generator, an editor's hover text, a formatter that has to put them back. **No token is emitted and
+nothing reaches the token stream**, so a lexer that ignores this hook behaves exactly as it did
+before the hook existed.
+
+Three things about the signature, each of which is the reason it is not something simpler:
+
+- **It hands over the two readers rather than the text.** The default takes no substring, so a lexer
+  that does not want comments pays nothing — the same property that makes `isBlockTrigger` free when
+  it is not overridden.
+- **Neither `offset` nor `source` is guaranteed by `Reader`.** They are there on
+  `CharSequenceReader`, which is what almost everything uses; a lexer built over some other reader
+  has to answer for itself, and handing over the readers is what lets it. The library guards the same
+  methods internally for the same reason.
+- **The same comment can be reported more than once, so record it idempotently — key by
+  `from.offset` rather than appending to a list.** Deciding whether a line continues the one above
+  runs the line-prefix skip over the next line *before* that line is scanned for real, and the
+  argument is evaluated whatever `isLineContinuationStart` answers — so this happens for every
+  lexer, not only one using leading continuations.
+
+## What is covered by tests
+
+The hooks are documented above and in the scaladoc, and *documented* is not the same as *exercised*.
+This table says which is which, so nobody has to read the suite to find out:
+
+| feature | suite |
+|---|---|
+| indentation, line joining, comments as trivia | `IndentationLexicalTests` |
+| token positions, line contents | `PositionTests` |
+| re-entrancy | `ReentrancyTests` |
+| `blockTriggerToken` / `isBlockTrigger` | `BlockTriggerTests` |
+| `isLineContinuationStart` / `previousToken` | `LeadingContinuationTests` |
+| `comment` | `CommentHookTests` |
+| the whole thing, through a small language | `ToyLanguageTests` |
+
+`BlockTriggerTests` is the one that was added late: `blockTriggerToken` shipped with a docstring, a
+README section and no test at all, and stayed that way until the feature was generalised. **A hook
+that is reachable and unexercised is the failure mode this library has**, so a new one is not
+finished until it has a row here.
+
+The comment paths themselves are the counter-example and are worth naming as one, because it is easy
+to assume otherwise about a feature that only just grew a hook: `IndentationLexicalTests` has covered
+them since long before `comment` existed, exercising nesting, spanning lines and unterminated
+comments **in both scan positions on purpose** — its own comment says why. What `CommentHookTests`
+adds is coverage of the hook, not of the scanning underneath it.
+
 ## Line Joining
 
 Expressions inside parentheses or brackets can span multiple lines without generating indentation tokens:
