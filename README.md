@@ -12,7 +12,7 @@ A Scala library for indentation-sensitive lexical analysis using parser combinat
 ## Installation
 
 ```scala
-libraryDependencies += "io.github.edadma" %%% "indentation" % "0.0.8"
+libraryDependencies += "io.github.edadma" %%% "indentation" % "0.0.9"
 ```
 
 Cross-compiled for JVM, Scala.js, and Scala Native.
@@ -77,7 +77,7 @@ Note: create a new parser instance per parse call, as `StandardTokenParsers` has
 | `lineComment` | Line comment prefix (e.g., `"//"`, `"#"`) |
 | `blockCommentStart` | Block comment start delimiter (e.g., `"/*"`) |
 | `blockCommentEnd` | Block comment end delimiter (e.g., `"*/"`) |
-| `blockTriggerToken` | Optional token that opens an indented block even inside a line-joining context (e.g., `Some("->")`). Default `None` — see [Block Trigger Token](#block-trigger-token) |
+| `blockTriggerToken` | Optional single token that opens an indented block even inside a line-joining context (e.g., `Some("->")`). Default `None`. For more than one, override `isBlockTrigger` — see [Block Trigger Token](#block-trigger-token) |
 
 ## Token Types
 
@@ -186,6 +186,30 @@ new IndentationLexical(
 ```
 
 Default is `None`, in which case the feature is entirely inert.
+
+### More than one of them
+
+Most languages have several tokens that open a block — an arrow opens a closure's body and a
+`match` opens its arms — and a rule admitting only one of them is a rule nobody can state: a
+reader has to remember which block forms may be written as an argument and which may not.
+Override `isBlockTrigger` to say the useful thing instead, which is that **a token that opens a
+block opens one wherever it is written**:
+
+```scala
+new IndentationLexical(/* ... */) {
+  override protected def isBlockTrigger(tok: Token): Boolean = tok match {
+    case Keyword("->") | Keyword("match") => true
+    case _                                => false
+  }
+}
+```
+
+`blockTriggerToken` is what the predicate defaults to, so passing the token and overriding the
+predicate are two spellings of the same feature and a lexer that does neither is unaffected.
+
+Accept only tokens that genuinely cannot *end* an expression, for the reason bracket joining
+exists in the first place: a token that could finish one would make the next line's margin
+significant in a place where a reader is entitled to lay an argument list out however reads best.
 
 ## Trailing-Operator Continuation
 

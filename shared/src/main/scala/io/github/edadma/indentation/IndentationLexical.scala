@@ -11,8 +11,14 @@ import scala.compiletime.uninitialized
 /** Indentation-aware lexer with optional line-joining inside paren / brace / bracket
  *  pairs.
  *
- *  `blockTriggerToken` opt-in: when set (e.g. `Some("->")`), the lexer recognizes
- *  it as the start of an indented block body and **suspends line-joining** for the
+ *  Block triggers: a token that opens an indented block does so wherever it is written,
+ *  brackets included. `isBlockTrigger` is the predicate that says which tokens those are, and
+ *  `blockTriggerToken` names a single one of them and is what that predicate defaults to. A
+ *  language with more than one such token — an arrow opening a closure's body, a `match`
+ *  opening its arms — overrides the predicate; one with exactly one may pass the token instead.
+ *
+ *  Either way the lexer reads the token
+ *  as the start of an indented block body and **suspends line-joining** for the
  *  body's extent — even when the trigger appears inside an outer paren context.
  *  Concretely: if the trigger token is the most recently emitted real token and
  *  the very next character begins a newline while `lineJoining > 0`, the lexer
@@ -140,6 +146,27 @@ class IndentationLexical(
    *  is stating one rule rather than two: a line joins when what follows demands it *and* what
    *  precedes admits it. */
   protected def previousToken: Token = lastEmittedToken
+
+  /** Whether `tok`, standing at the end of a line **inside** a bracket pair, opens an indented
+   *  block — so that line-joining is suspended for that block's extent and the body is given the
+   *  Newline, Indent and Dedent tokens its parser needs.
+   *
+   *  This is the general form of `blockTriggerToken`, which names one such token and is what this
+   *  defaults to. A language usually has more than one: an arrow opens a closure's body and a
+   *  `match` opens its arms, and a rule admitting only one of them is a rule nobody can state — a
+   *  reader has to remember which block forms may be written as an argument and which may not.
+   *  Overriding this says the useful thing instead, which is that **a token that opens a block
+   *  opens one wherever it is written**.
+   *
+   *  It is the same shape as `isLineContinuationToken` and answers the opposite question. That one
+   *  says a newline here is not a newline; this says a newline here is one after all, in a place
+   *  the bracket rule had already decided it was not.
+   *
+   *  An implementation must accept only tokens that genuinely cannot *end* an expression, for the
+   *  reason the bracket rule exists in the first place: a token that could finish one would make
+   *  the next line's margin significant in a place where a reader is entitled to lay an argument
+   *  list out however reads best. */
+  protected def isBlockTrigger(tok: Token): Boolean = triggerKeyword.contains(tok)
 
   def num(s: String) = NumericLit(s)
 
@@ -585,7 +612,7 @@ class IndentationLexical(
             // the most recently emitted token is the configured trigger (e.g. `->`),
             // suspend line-joining for the body. Push a frame so we can restore it
             // when dedent brings indentation back to (or below) the trigger's level.
-            val triggered = lineJoining > 0 && triggerKeyword.exists(tk => lastEmittedToken == tk)
+            val triggered = lineJoining > 0 && lastEmittedToken != null && isBlockTrigger(lastEmittedToken)
             // Trailing-token continuation: outside any paren/bracket/brace pair, a
             // trailing operator (per `isLineContinuationToken`) suppresses the
             // implicit newline so the RHS can live on the next indented line.
