@@ -12,7 +12,7 @@ A Scala library for indentation-sensitive lexical analysis using parser combinat
 ## Installation
 
 ```scala
-libraryDependencies += "io.github.edadma" %%% "indentation" % "0.0.9"
+libraryDependencies += "io.github.edadma" %%% "indentation" % "0.0.10"
 ```
 
 Cross-compiled for JVM, Scala.js, and Scala Native.

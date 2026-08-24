@@ -37,7 +37,12 @@ import scala.compiletime.uninitialized
  *  `blockCommentEnd` in every position — at the start of a line and in the middle
  *  of one alike. Block comments nest, so a region that already contains a comment
  *  can be commented out. A block comment that is never closed produces an error
- *  token at its opening delimiter rather than raising. */
+ *  token at its opening delimiter rather than raising.
+ *
+ *  A comment is trivia and is dropped. `comment` is the hook for a language that wants them
+ *  anyway — a documentation generator, an editor's hover text — and it is called as each one is
+ *  consumed, in both positions, with the readers that bracket it. It does nothing by default, so
+ *  nothing changes for a consumer that ignores it. */
 class IndentationLexical(
     newlineBeforeIndent: Boolean,
     newlineAfterDedent: Boolean,
@@ -168,6 +173,37 @@ class IndentationLexical(
    *  list out however reads best. */
   protected def isBlockTrigger(tok: Token): Boolean = triggerKeyword.contains(tok)
 
+  /** Called as each comment is consumed, with the readers that bracket it: `from` stands at the
+   *  opening delimiter and `to` just past the comment's end. The default does nothing, which is
+   *  what every caller before this hook existed got.
+   *
+   *  **A comment is trivia and this does not change that.** No token is emitted, nothing reaches
+   *  the token stream, and a language that ignores this hook lexes exactly as it did. What the
+   *  hook is for is the language that wants its comments for something *beside* parsing — a
+   *  documentation generator, an editor's hover text, a formatter that has to put them back.
+   *  Emitting a `Comment` token would serve the same need and cost far more: every grammar rule in
+   *  every consumer would grow a skip for it, and trivia would stop being trivia.
+   *
+   *  **The readers are handed over rather than the text**, so that an implementation that does not
+   *  want the comment pays nothing — no substring is taken unless somebody takes one. It is the
+   *  same property that makes `isBlockTrigger` free when it is not overridden.
+   *
+   *  Extracting the text is `from.source.subSequence(from.offset, to.offset)` **where the reader
+   *  supports it**, which `CharSequenceReader` does. Neither `offset` nor `source` is guaranteed by
+   *  `Reader`, which is why they are not called here: `samePlace` and `read` both guard against
+   *  `NoSuchMethodError` for readers that have neither, and an implementation over such a reader
+   *  has to answer for itself. Handing over the readers puts that where it can be answered instead
+   *  of guessed.
+   *
+   *  **THE SAME COMMENT MAY BE REPORTED MORE THAN ONCE, so record it idempotently — key by
+   *  `from.offset` rather than appending to a list.** The lexer looks ahead: deciding whether a
+   *  line continues the one above it runs `skipLinePrefix(skipBlankLines(in.rest))` over the next
+   *  line *before* that line is scanned for real, and any comment in the skipped prefix is
+   *  therefore seen twice. This is a property of the lookahead rather than an accident of it, and
+   *  suppressing it here would mean tracking what had already been reported — which is the
+   *  implementation's job, and cheaper there, since it is keeping a table either way. */
+  protected def comment(from: Reader[Char], to: Reader[Char]): Unit = ()
+
   def num(s: String) = NumericLit(s)
 
   def scan(s: String): List[Token] = {
@@ -266,10 +302,14 @@ class IndentationLexical(
     val r1 = skipSpace(r)
 
     if (r1.atEnd || r1.first == '\n') r1
-    else if (atLineComment(r1)) skipToEOL(r1.drop(lineComment.length))
-    else if (atBlockComment(r1))
+    else if (atLineComment(r1)) {
+      val r2 = skipToEOL(r1.drop(lineComment.length))
+
+      comment(r1, r2)
+      r2
+    } else if (atBlockComment(r1))
       scanBlockComment(r1) match {
-        case Some(r2) => skipLinePrefix(r2)
+        case Some(r2) => comment(r1, r2); skipLinePrefix(r2)
         case None     => r1
       }
     else r1
@@ -320,14 +360,18 @@ class IndentationLexical(
   override def whitespaceChar = elem("space char", c => c == ' ' || c == '\t' || c == '\r')
 
   private lazy val lineCommentParser: Parser[Any] = Parser { in =>
-    if (atLineComment(in)) Success((), skipToEOL(in.drop(lineComment.length)))
-    else Failure("not a line comment", in)
+    if (atLineComment(in)) {
+      val after = skipToEOL(in.drop(lineComment.length))
+
+      comment(in, after)
+      Success((), after)
+    } else Failure("not a line comment", in)
   }
 
   private lazy val blockCommentParser: Parser[Any] = Parser { in =>
     if (atBlockComment(in))
       scanBlockComment(in) match {
-        case Some(after) => Success((), after)
+        case Some(after) => comment(in, after); Success((), after)
         // `Error` (unlike `Failure`) propagates out of the enclosing `rep`, and
         // carries `in` — the opening delimiter — as its position.
         case None => Error(UnclosedComment, in)
